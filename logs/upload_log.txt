@@ -1,0 +1,17 @@
+[2025-05-14T07:37:52.288Z] UserID: shis, Label1: infected, Label2:undefined  Filename: infected_infrared_shis_1747208272078.jpeg
+[2025-05-14T07:37:52.289Z] UserID: shis, Label1: infected, Label2:undefined  Filename: infected_infrared_shis_1747208272287.jpeg
+[2025-05-14T07:40:27.774Z] UserID: shis, Label1: infected, Label2:undefined , Filename: infected_infrared_shis_1747208427480.jpeg
+[2025-05-14T07:40:27.775Z] UserID: shis, Label1: infected, Label2:undefined , Filename: infected_infrared_shis_1747208427681.jpeg
+[2025-05-14T07:41:07.775Z] UserID: shis, Label1: infected, Label2: infrared , Filename: infected_infrared_shis_1747208467573.jpeg
+[2025-05-14T07:41:07.776Z] UserID: shis, Label1: infected, Label2: infrared , Filename: infected_infrared_shis_1747208467690.jpeg
+[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296637661.jpg
+[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296648007.jpg
+[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296659916.jpg
+[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296674900.jpg
+[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296693765.jpg
+[2025-05-15T08:15:37.867Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296935475.jpg
+[2025-05-15T08:15:37.867Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296936456.jpg
+[2025-05-15T08:17:12.867Z] UserID: shis, Label1: noninfected, Label2: infrared , Filename: noninfected_infrared_shis_1747297017860.jpg
+[2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634597784.jpg
+[2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634598578.jpg
+[2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634598648.jpg
