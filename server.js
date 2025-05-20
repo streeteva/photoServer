@@ -6,14 +6,19 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-
 const app = express();
-const PORT = process.env.PORT || 3000;
-//const users = [];
-
-const SECRET_KEY = process.env.SECRET_KEY;
 const db = require('./db');
 
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.SECRET_KEY;
+
+
+// Enable CORS for your mobile app
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Validation functions
 const validateUserId = (userId) => {
   // 4-20 chars, letters, numbers, underscores only
   const userIdRegex = /^[a-zA-Z0-9_]{4,20}$/;
@@ -26,17 +31,12 @@ const validatePassword = (password) => {
   return passwordRegex.test(password);
 };
 
-// Enable CORS for your mobile app
-app.use(cors());
-app.use(express.json());
-
-//const path = require('path');
-
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-app.get('/', (req, res) => {
-  res.send('Server is up and running!');
-});
+// Create necessary folders
+const uploadsDir = path.join(__dirname, 'uploads');
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
+const logFilePath = path.join(logsDir, 'upload_log.txt');
 
 // -------------------- Register Endpoint --------------------
 app.post('/register', async (req, res) => {
@@ -46,7 +46,6 @@ app.post('/register', async (req, res) => {
     return res.status(400).json({ message: 'Missing userId or password' });
   }
 
-  //const existingUser = users.find(user => user.userId === userId);
   const existingUser = db.prepare('SELECT * FROM users WHERE userId = ?').get(userId);
   if (existingUser) {
     return res.status(400).json({ message: 'User already exists' });
@@ -63,7 +62,6 @@ app.post('/register', async (req, res) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-  //users.push({ userId, password: hashedPassword });
   db.prepare('INSERT INTO users (userId, password) VALUES (?, ?)').run(userId, hashedPassword);
 
   const token = jwt.sign({ userId }, SECRET_KEY, { expiresIn: '1h' });
@@ -96,12 +94,6 @@ app.post('/login', async (req, res) => {
 });
 
 // -------------------- File Upload ------------------------
-const uploadsDir = path.join(__dirname, 'uploads');
-const logsDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
-
-const logFilePath = path.join(logsDir, 'upload_log.txt');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
@@ -131,29 +123,15 @@ app.post('/uploads', upload.array('photos[]', 5), (req, res) => {
   res.json({ message: 'Upload successful', files: req.files.map(file => file.filename) });
 });
 
-// Error handling for multer
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({ message: err.message });
-  }
-  next(err);
-});
 
+// ---------- Gallery Route ----------
 app.get('/gallery', (req, res) => {
-  const uploadsDir = path.join(__dirname, 'uploads');
-
   fs.readdir(uploadsDir, (err, files) => {
-    if (err) {
-      return res.status(500).send('Failed to read uploads directory.');
-    }
+    if (err) return res.status(500).send('Unable to load images');
 
-    // Filter image files only (basic filter for jpg, png, etc.)
-    const imageFiles = files.filter(file =>
-      /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file)
-    );
+    const imageFiles = files.filter(file => /\.(jpg|jpeg|png|gif)$/i.test(file));
 
     const html = `
-      <!DOCTYPE html>
       <html>
       <head>
         <title>Photo Gallery</title>
@@ -162,7 +140,8 @@ app.get('/gallery', (req, res) => {
           .gallery { display: flex; flex-wrap: wrap; gap: 16px; }
           .photo { border: 1px solid #ccc; padding: 8px; width: 200px; }
           img { max-width: 100%; height: auto; display: block; }
-          a { text-decoration: none; display: block; margin-top: 8px; text-align: center; }
+          .filename { margin-top: 8px; font-size: 14px; word-break: break-all; }
+          a { text-decoration: none; display: block; margin-top: 4px; text-align: center; color: #007BFF; }
         </style>
       </head>
       <body>
@@ -179,8 +158,98 @@ app.get('/gallery', (req, res) => {
       </body>
       </html>
     `;
+
     res.send(html);
   });
 });
 
+// ---------- View Users ----------
+app.get('/view-users', (req, res) => {
+  const users = db.prepare('SELECT userId FROM users').all();
+  const rows = users.map(user => `<tr><td>${user.userId}</td></tr>`).join('');
+
+  res.send(`
+    <html>
+    <head>
+      <title>Users</title>
+      <style>
+        table { border-collapse: collapse; width: 50%; margin: auto; }
+        th, td { border: 1px solid #ccc; padding: 8px; }
+      </style>
+    </head>
+    <body>
+      <h1 style="text-align:center;">Registered Users</h1>
+      <table><tr><th>User ID</th></tr>${rows}</table>
+    </body>
+    </html>
+  `);
+});
+
+// ---------- Log Routes ----------
+app.get('/download-log', (req, res) => {
+  if (fs.existsSync(logFilePath)) {
+    res.download(logFilePath, 'upload_log.txt');
+  } else {
+    res.status(404).send('Log file not found.');
+  }
+});
+
+app.get('/view-log', (req, res) => {
+  fs.readFile(logFilePath, 'utf-8', (err, data) => {
+    if (err) return res.status(500).send('Could not read log file.');
+    res.send(`
+      <html>
+      <head><title>Upload Log</title></head>
+      <body><h1>Upload Log</h1><pre>${data}</pre></body>
+      </html>
+    `);
+  });
+});
+
+// ---------- Dashboard ----------
+app.get('/dashboard', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Dashboard</title>
+      <style>
+        body { font-family: Arial; padding: 40px; background: #f4f4f4; text-align: center; }
+        .btn {
+          display: block;
+          width: 250px;
+          margin: 10px auto;
+          padding: 12px;
+          background-color: #007BFF;
+          color: white;
+          text-decoration: none;
+          font-size: 16px;
+          border-radius: 8px;
+        }
+        .btn:hover { background-color: #0056b3; }
+      </style>
+    </head>
+    <body>
+      <h1>Admin Dashboard</h1>
+      <a class="btn" href="/gallery" target="_blank">📷 View Uploaded Photos</a>
+      <a class="btn" href="/view-users" target="_blank">👥 View Users</a>
+      <a class="btn" href="/download-log">⬇️ Download Log File</a>
+      <a class="btn" href="/view-log" target="_blank">📄 View Log File</a>
+    </body>
+    </html>
+  `);
+});
+
+// ---------- Error Handler ----------
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ message: err.message });
+  }
+  next(err);
+});
+
+// ---------- Start Server ----------
+app.get('/', (req, res) => {
+  res.send('Server is up and running!');
+});
 app.listen(PORT, () => console.log(`Server is running on http://localhost:${PORT}`));
