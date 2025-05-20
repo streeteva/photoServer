@@ -139,4 +139,47 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
+app.get('/gallery', (req, res) => {
+  const uploadsDir = path.join(__dirname, 'uploads');
+
+  fs.readdir(uploadsDir, (err, files) => {
+    if (err) {
+      return res.status(500).send('Failed to read uploads directory.');
+    }
+
+    // Filter image files only (basic filter for jpg, png, etc.)
+    const imageFiles = files.filter(file =>
+      /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file)
+    );
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Photo Gallery</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          .gallery { display: flex; flex-wrap: wrap; gap: 16px; }
+          .photo { border: 1px solid #ccc; padding: 8px; width: 200px; }
+          img { max-width: 100%; height: auto; display: block; }
+          a { text-decoration: none; display: block; margin-top: 8px; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <h1>Uploaded Photos</h1>
+        <div class="gallery">
+          ${imageFiles.map(file => `
+            <div class="photo">
+              <img src="/uploads/${file}" alt="${file}" />
+              <a href="/uploads/${file}" download>Download</a>
+            </div>
+          `).join('')}
+        </div>
+      </body>
+      </html>
+    `;
+    res.send(html);
+  });
+});
+
 app.listen(PORT, () => console.log(`Server is running on http://localhost:${PORT}`));
