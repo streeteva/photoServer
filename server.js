@@ -171,6 +171,7 @@ app.get('/gallery', (req, res) => {
           ${imageFiles.map(file => `
             <div class="photo">
               <img src="/uploads/${file}" alt="${file}" />
+              <div class="filename">${file}</div>
               <a href="/uploads/${file}" download>Download</a>
             </div>
           `).join('')}
