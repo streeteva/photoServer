@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "9dc73d71-0510-48ea-a022-1aa5774ee6f1"
+      }
+    },
+    "android": {
+      "package": "com.nyp.CatheSure"
+    }
+  }
+}

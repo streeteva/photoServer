@@ -15,3 +15,9 @@
 [2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634597784.jpg
 [2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634598578.jpg
 [2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634598648.jpg
+[2025-05-19T07:16:35.929Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747638995762.jpeg
+[2025-05-19T07:16:35.929Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747638995863.jpeg
+[2025-05-19T07:16:35.929Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747638995909.jpeg
+[2025-05-19T07:17:04.473Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747639015713.jpeg
+[2025-05-19T08:16:30.092Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747642589771.jpeg
+[2025-05-19T08:16:30.092Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747642590014.jpeg
