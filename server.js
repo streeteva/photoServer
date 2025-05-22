@@ -137,6 +137,20 @@ app.get('/gallery', (req, res) => {
         <title>Photo Gallery</title>
         <style>
           body { font-family: Arial, sans-serif; padding: 20px; }
+            .top-bar {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 20px;
+            }
+          .download-btn {
+            background: #007BFF;
+            color: white;
+            padding: 10px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 14px;
+          }
           .gallery { display: flex; flex-wrap: wrap; gap: 16px; }
           .photo { border: 1px solid #ccc; padding: 8px; width: 200px; }
           img { max-width: 100%; height: auto; display: block; }
@@ -145,10 +159,11 @@ app.get('/gallery', (req, res) => {
         </style>
       </head>
       <body>
-        <h1>Uploaded Photos</h1>
-        <div class="gallery">
-        <a href="/download-all" style="display: inline-block; margin-bottom: 20px; background: #007BFF; color: white; padding: 10px 16px; border-radius: 6px; text-decoration: none;">⬇ Download All Photos</a>
-
+            <div class="top-bar">
+              <h1>Uploaded Photos</h1>
+              <a class="download-btn" href="/download-all">⬇ Download All Photos</a>
+            </div>
+          <div class="gallery">
           ${imageFiles.map(file => `
             <div class="photo">
               <img src="/uploads/${file}" alt="${file}" />
@@ -156,7 +171,7 @@ app.get('/gallery', (req, res) => {
               <a href="/uploads/${file}" download>Download</a>
             </div>
           `).join('')}
-        </div>
+          </div>
       </body>
       </html>
     `;
