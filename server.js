@@ -6,17 +6,30 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+
 const app = express();
 const db = require('./db');
 
 const PORT = process.env.PORT || 3000;
 const SECRET_KEY = process.env.SECRET_KEY;
+const sessionSecret = process.env.SESSION_SECRET || 'fallback_secret_for_dev_only';
 
+const session = require('express-session');
+
+app.use(session({
+  secret: sessionSecret,
+  resave: false,
+  saveUninitialized: true,
+  cookie: { maxAge: 60 * 60 * 1000 } // 1 hour
+}));
 
 // Enable CORS for your mobile app
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // Validation functions
 const validateUserId = (userId) => {
@@ -31,12 +44,62 @@ const validatePassword = (password) => {
   return passwordRegex.test(password);
 };
 
+// Hardcoded login
+const HARD_CODED_USER = 'admin';
+const HARD_CODED_PASS = 'password123';
+
+function requireLogin(req, res, next) {
+  if (req.session.user === HARD_CODED_USER) {
+    next();
+  } else {
+    res.redirect('/mainLogin');
+  }
+}
+
 // Create necessary folders
 const uploadsDir = path.join(__dirname, 'uploads');
 const logsDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
 const logFilePath = path.join(logsDir, 'upload_log.txt');
+
+// Login page
+app.get('/mainLogin', (req, res) => {
+  const html = `
+    <html>
+    <head><title>Login</title></head>
+    <body>
+      <h2>Login</h2>
+      <form method="POST" action="/mainLogin">
+        <input type="text" name="userId" placeholder="User ID" required />
+        <input type="password" name="password" placeholder="Password" required />
+        <button type="submit">Login</button>
+      </form>
+    </body>
+    </html>
+  `;
+  res.send(html);
+});
+
+// Handle login
+app.post('/mainLogin', (req, res) => {
+  const { userId, password } = req.body;
+
+  if (userId === HARD_CODED_USER && password === HARD_CODED_PASS) {
+    req.session.user = userId;
+    res.redirect('/dashboard');
+  } else {
+    res.status(401).send('Invalid credentials. <a href="/mainLogin">Try again</a>');
+  }
+});
+
+// Logout
+app.get('/logout', (req, res) => {
+  req.session.destroy(err => {
+    if (err) res.status(500).send('Could not log out');
+    else res.redirect('/mainLogin');
+  });
+});
 
 // -------------------- Register Endpoint --------------------
 app.post('/register', async (req, res) => {
@@ -125,7 +188,7 @@ app.post('/uploads', upload.array('photos[]', 5), (req, res) => {
 
 
 // ---------- Gallery Route ----------
-app.get('/gallery', (req, res) => {
+app.get('/gallery', requireLogin,(req, res) => {
   fs.readdir(uploadsDir, (err, files) => {
     if (err) return res.status(500).send('Unable to load images');
 
@@ -183,7 +246,7 @@ app.get('/gallery', (req, res) => {
 // ---------- Download all photos ----------
 const archiver = require('archiver');
 
-app.get('/download-all', (req, res) => {
+app.get('/download-all',requireLogin, (req, res) => {
   const archive = archiver('zip', { zlib: { level: 9 } });
 
   res.attachment('all_photos.zip');
@@ -206,7 +269,7 @@ app.get('/download-all', (req, res) => {
 
 
 // ---------- View Users ----------
-app.get('/view-users', (req, res) => {
+app.get('/view-users', requireLogin,(req, res) => {
   const users = db.prepare('SELECT userId FROM users').all();
   const rows = users.map(user => `<tr><td>${user.userId}</td></tr>`).join('');
 
@@ -228,7 +291,7 @@ app.get('/view-users', (req, res) => {
 });
 
 // ---------- Log Routes ----------
-app.get('/download-log', (req, res) => {
+app.get('/download-log',requireLogin, (req, res) => {
   if (fs.existsSync(logFilePath)) {
     res.download(logFilePath, 'upload_log.txt');
   } else {
@@ -248,8 +311,9 @@ app.get('/view-log', (req, res) => {
   });
 });
 
+
 // ---------- Dashboard ----------
-app.get('/dashboard', (req, res) => {
+app.get('/dashboard', requireLogin, (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
