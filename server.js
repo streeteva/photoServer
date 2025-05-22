@@ -147,6 +147,8 @@ app.get('/gallery', (req, res) => {
       <body>
         <h1>Uploaded Photos</h1>
         <div class="gallery">
+        <a href="/download-all" style="display: inline-block; margin-bottom: 20px; background: #007BFF; color: white; padding: 10px 16px; border-radius: 6px; text-decoration: none;">⬇ Download All Photos</a>
+
           ${imageFiles.map(file => `
             <div class="photo">
               <img src="/uploads/${file}" alt="${file}" />
@@ -162,6 +164,31 @@ app.get('/gallery', (req, res) => {
     res.send(html);
   });
 });
+
+// ---------- Download all photos ----------
+const archiver = require('archiver');
+
+app.get('/download-all', (req, res) => {
+  const archive = archiver('zip', { zlib: { level: 9 } });
+
+  res.attachment('all_photos.zip');
+  archive.pipe(res);
+
+  fs.readdir(uploadsDir, (err, files) => {
+    if (err) {
+      console.error('Error reading uploads directory:', err);
+      return res.status(500).send('Could not read uploads directory');
+    }
+
+    files.forEach(file => {
+      const filePath = path.join(uploadsDir, file);
+      archive.file(filePath, { name: file });
+    });
+
+    archive.finalize();
+  });
+});
+
 
 // ---------- View Users ----------
 app.get('/view-users', (req, res) => {
