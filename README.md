@@ -47,7 +47,7 @@ project-root/
 
 1. Clone the repository
 
-   git clone https://github.com/your-username/photoServer.git  
+   git clone https://github.com/streeteva/photoServer.git  
    cd photoServer
 
 2. Install dependencies
