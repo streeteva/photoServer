@@ -165,11 +165,13 @@ const storage = multer.diskStorage({
     const timestamp = Date.now();
     const row1Label = req.body.row1Selection || 'row1_unselected';
     const row2Label = req.body.row2Selection || 'row2_unselected';
+    const totalScore = req.body.totalScore;
     const ext = path.extname(file.originalname);
     file.row1Label = row1Label;
     file.row2Label = row2Label;
     file.userId = userId;
-    cb(null, `${row1Label}_${row2Label}_${userId}_${timestamp}${ext}`);
+    file.totalScore = totalScore;
+    cb(null, `${row1Label}_${totalScore}_${row2Label}_${userId}_${timestamp}${ext}`);
   }
 });
 
@@ -180,7 +182,7 @@ app.post('/uploads', upload.array('photos[]', 5), (req, res) => {
     return res.status(400).json({ message: 'Missing userId or photos' });
   }
 
-  const logEntries = req.files.map(file => `[${new Date().toISOString()}] UserID: ${file.userId}, Label1: ${file.row1Label}, Label2: ${file.row2Label} , Filename: ${file.filename}\n`);
+  const logEntries = req.files.map(file => `[${new Date().toISOString()}] UserID: ${file.userId}, Infection: ${file.row1Label}, Score: ${file.totalScore}, ImageType: ${file.row2Label} , Filename: ${file.filename}\n`);
   fs.appendFile(logFilePath, logEntries.join(''), err => { if (err) console.error('Failed to write log:', err); });
 
   res.json({ message: 'Upload successful', files: req.files.map(file => file.filename) });
