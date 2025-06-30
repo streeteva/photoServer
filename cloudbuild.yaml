@@ -1,0 +1,26 @@
+steps:
+  - name: 'gcr.io/cloud-builders/npm'
+    args: ['install']
+  - name: 'gcr.io/cloud-builders/npm'
+    args: ['run', 'build']
+    # Optional, only if your app has a build step
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - CatheSure
+      - --image=asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME
+      - --region=asia-southeast1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+
+images:
+  - asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME
+
+
