@@ -1,26 +1,42 @@
+substitutions:
+  _PROJECT_ID: cathesure
+  _REPO_NAME: streeteva
+
 steps:
+  # Install dependencies
   - name: 'gcr.io/cloud-builders/npm'
     args: ['install']
-  - name: 'gcr.io/cloud-builders/npm'
-    args: ['run', 'build']
-    # Optional, only if your app has a build step
+
+  # Build with explicit Dockerfile reference
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME', '.']
+    args: [
+      'build',
+      '-t', 'asia-southeast1-docker.pkg.dev/${_PROJECT_ID}/cloud-run-source-deploy/${_REPO_NAME}',
+      '-f', 'Dockerfile',  # Explicitly point to Dockerfile
+      '.'  # Build context
+    ]
+
+  # Push image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME']
+    args: ['push', 'asia-southeast1-docker.pkg.dev/${_PROJECT_ID}/cloud-run-source-deploy/${_REPO_NAME}']
+
+  # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
-      - run
-      - deploy
-      - CatheSure
-      - --image=asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME
-      - --region=asia-southeast1
-      - --platform=managed
-      - --allow-unauthenticated
-      - --port=8080
+      - 'run'
+      - 'deploy'
+      - 'cathesure'
+      - '--image=asia-southeast1-docker.pkg.dev/${_PROJECT_ID}/cloud-run-source-deploy/${_REPO_NAME}'
+      - '--region=asia-southeast1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=8080'
+      - '--timeout=300s'
+      - '--project=cathesure'
+      - '--set-env-vars=SECRET_KEY=PRoAJStun8wgCFH3KrTCDiEDaufPQmUW'
 
 images:
-  - asia-southeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME
-
-
+  - 'asia-southeast1-docker.pkg.dev/${_PROJECT_ID}/cloud-run-source-deploy/${_REPO_NAME}'
+options:
+  logging: CLOUD_LOGGING_ONLY

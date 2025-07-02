@@ -6,10 +6,10 @@ WORKDIR /app
 
 # Copy files
 COPY package*.json ./
-RUN npm install
+RUN npm install --omit=dev # Skip dev dependencies
 
 COPY . .
 
 # Start server
 EXPOSE 8080
-CMD [ "npm", "start" ]
+CMD ["node", "server.js"] 
