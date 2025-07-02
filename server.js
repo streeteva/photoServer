@@ -166,12 +166,16 @@ const storage = multer.diskStorage({
     const row1Label = req.body.row1Selection || 'row1_unselected';
     const row2Label = req.body.row2Selection || 'row2_unselected';
     const totalScore = req.body.totalScore;
+    // Extract symptom labels from body (those extra checkboxes)
+    const extraFields = ['pain', 'swelling', 'crust', 'redness', 'secretion'];
+    const extraData = extraFields.map(field => `${field.charAt(0).toUpperCase() + field.slice(1)}: ${req.body[field] || 'N/A'}`).join(', ');
     const ext = path.extname(file.originalname);
     file.row1Label = row1Label;
     file.row2Label = row2Label;
     file.userId = userId;
     file.totalScore = totalScore;
-    cb(null, `${row1Label}_${totalScore}_${row2Label}_${userId}_${timestamp}${ext}`);
+    file.extraData = extraData
+    cb(null, `${userId}_${row1Label}_${totalScore}_${row2Label}_${extraData}_${timestamp}${ext}`);
   }
 });
 
@@ -182,7 +186,10 @@ app.post('/uploads', upload.array('photos[]', 5), (req, res) => {
     return res.status(400).json({ message: 'Missing userId or photos' });
   }
 
-  const logEntries = req.files.map(file => `[${new Date().toISOString()}] UserID: ${file.userId}, Infection: ${file.row1Label}, Score: ${file.totalScore}, ImageType: ${file.row2Label} , Filename: ${file.filename}\n`);
+  const logEntries = req.files.map(file => {
+    const timestamp = new Date().toISOString();
+    return `[${timestamp}] UserID: ${file.userId}, Infection: ${file.row1Label}, Score: ${file.totalScore}, ImageType: ${file.row2Label}, ${extraData}, Filename: ${file.filename}\n`;
+  });
   fs.appendFile(logFilePath, logEntries.join(''), err => { if (err) console.error('Failed to write log:', err); });
 
   res.json({ message: 'Upload successful', files: req.files.map(file => file.filename) });
