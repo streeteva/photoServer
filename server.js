@@ -175,7 +175,7 @@ const storage = multer.diskStorage({
     file.userId = userId;
     file.totalScore = totalScore;
     file.extraData = extraData
-    cb(null, `${userId}_${row1Label}_${totalScore}_${row2Label}_${extraData}_${timestamp}${ext}`);
+    cb(null, `${userId}_${row1Label}_${totalScore}_${row2Label}_${timestamp}${ext}`);
   }
 });
 
@@ -188,7 +188,7 @@ app.post('/uploads', upload.array('photos[]', 5), (req, res) => {
 
   const logEntries = req.files.map(file => {
     const timestamp = new Date().toISOString();
-    return `[${timestamp}] UserID: ${file.userId}, Infection: ${file.row1Label}, Score: ${file.totalScore}, ImageType: ${file.row2Label}, ${extraData}, Filename: ${file.filename}\n`;
+    return `[${timestamp}] UserID: ${file.userId}, Infection: ${file.row1Label}, Score: ${file.totalScore}, ImageType: ${file.row2Label}, ${file.extraData}, Filename: ${file.filename}\n`;
   });
   fs.appendFile(logFilePath, logEntries.join(''), err => { if (err) console.error('Failed to write log:', err); });
 
