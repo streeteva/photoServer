@@ -1,29 +1,18 @@
-[2025-05-14T07:37:52.288Z] UserID: shis, Label1: infected, Label2:undefined  Filename: infected_infrared_shis_1747208272078.jpeg
-[2025-05-14T07:37:52.289Z] UserID: shis, Label1: infected, Label2:undefined  Filename: infected_infrared_shis_1747208272287.jpeg
-[2025-05-14T07:40:27.774Z] UserID: shis, Label1: infected, Label2:undefined , Filename: infected_infrared_shis_1747208427480.jpeg
-[2025-05-14T07:40:27.775Z] UserID: shis, Label1: infected, Label2:undefined , Filename: infected_infrared_shis_1747208427681.jpeg
-[2025-05-14T07:41:07.775Z] UserID: shis, Label1: infected, Label2: infrared , Filename: infected_infrared_shis_1747208467573.jpeg
-[2025-05-14T07:41:07.776Z] UserID: shis, Label1: infected, Label2: infrared , Filename: infected_infrared_shis_1747208467690.jpeg
-[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296637661.jpg
-[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296648007.jpg
-[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296659916.jpg
-[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296674900.jpg
-[2025-05-15T08:11:34.090Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296693765.jpg
-[2025-05-15T08:15:37.867Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296935475.jpg
-[2025-05-15T08:15:37.867Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747296936456.jpg
-[2025-05-15T08:17:12.867Z] UserID: shis, Label1: noninfected, Label2: infrared , Filename: noninfected_infrared_shis_1747297017860.jpg
-[2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634597784.jpg
-[2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634598578.jpg
-[2025-05-19T06:03:18.809Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747634598648.jpg
-[2025-05-19T07:16:35.929Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747638995762.jpeg
-[2025-05-19T07:16:35.929Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747638995863.jpeg
-[2025-05-19T07:16:35.929Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747638995909.jpeg
-[2025-05-19T07:17:04.473Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747639015713.jpeg
-[2025-05-19T08:16:30.092Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747642589771.jpeg
-[2025-05-19T08:16:30.092Z] UserID: shis, Label1: infected, Label2: nonInfrared , Filename: infected_nonInfrared_shis_1747642590014.jpeg
-[2025-06-26T02:46:26.418Z] UserID: shis, Label1: No, Score: 0, Label2: nonInfrared , Filename: No_0_nonInfrared_shis_1750905980116.jpg
-[2025-06-26T02:46:26.419Z] UserID: shis, Label1: No, Score: 0, Label2: nonInfrared , Filename: No_0_nonInfrared_shis_1750905983440.jpg
-[2025-06-26T02:47:10.654Z] UserID: shis, Label1: No, Score: 7, Label2: nonInfrared , Filename: No_7_nonInfrared_shis_1750906021729.jpg
-[2025-06-26T02:47:10.654Z] UserID: shis, Label1: No, Score: 7, Label2: nonInfrared , Filename: No_7_nonInfrared_shis_1750906025170.jpg
-[2025-06-26T02:48:26.077Z] UserID: shis, Infection: No, Score: 7, ImageType: nonInfrared , Filename: No_7_nonInfrared_shis_1750906098223.jpg
-[2025-06-26T02:48:26.080Z] UserID: shis, Infection: No, Score: 7, ImageType: nonInfrared , Filename: No_7_nonInfrared_shis_1750906102220.jpg
+[2025-07-07T08:34:47.875Z] UserID: shis, Infection: No, Score: 4, ImageType: nonInfrared, Pain: No, Swelling: <0.5cm, Crust: <0.5cm, Redness: <0.5cm, Secretion: Clear Watery, Filename: shis_No_4_nonInfrared_1751877287442.jpg
+[2025-07-07T08:34:48.164Z] UserID: shis, Infection: No, Score: 4, ImageType: nonInfrared, Pain: No, Swelling: <0.5cm, Crust: <0.5cm, Redness: <0.5cm, Secretion: Clear Watery, Filename: shis_No_4_nonInfrared_1751877287875.jpg
+[2025-07-21T06:53:30.175Z] UserID: shis, Infection: No, Score: 4, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: >0.5cm, Secretion: Yellowish/Greenish, Filename: shis_No_4_nonInfrared_1753080809912.jpg
+[2025-07-21T06:53:30.423Z] UserID: shis, Infection: No, Score: 4, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: >0.5cm, Secretion: Yellowish/Greenish, Filename: shis_No_4_nonInfrared_1753080810175.jpg
+[2025-07-21T06:57:23.116Z] UserID: shis, Infection: No, Score: 4, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: >0.5cm, Secretion: Yellowish/Greenish, Filename: shis_No_4_nonInfrared_1753081041654.jpg
+[2025-07-21T08:52:55.153Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753087973914.jpg
+[2025-07-22T02:55:45.907Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753152945576.jpg
+[2025-07-22T03:09:36.853Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753153776576.jpg
+[2025-07-22T03:09:37.083Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753153776853.jpg
+[2025-07-22T03:11:08.358Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753153868094.jpg
+[2025-07-22T03:11:08.611Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753153868358.jpg
+[2025-07-22T03:11:08.848Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753153868611.jpg
+[2025-07-22T03:17:08.541Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, Pain: No, Swelling: No, Crust: No, Redness: No, Secretion: No, Filename: shis_No_0_nonInfrared_1753154228273.jpg
+[2025-07-22T09:12:06.813Z] UserID: shisnyp, Score: 0, pain: No, swelling: No, crust: No, redness: No, secretion: No, Filename: shisnyp_No_0_nonInfrared_1753175526237.jpg
+[2025-07-22T09:15:23.558Z] UserID: shisnyp, Infection: No, Score: 6, ImageType: nonInfrared, pain: No, swelling: <0.5cm, crust: >0.5cm, redness: <0.5cm, secretion: Yellowish/Greenish, Filename: shisnyp_No_6_nonInfrared_1753175723209.jpg
+[2025-07-24T05:20:44.660Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, pain: No, swelling: No, crust: No, redness: No, secretion: No, Filename: shis_No_0_nonInfrared_1753334444060.jpg
+[2025-07-24T05:49:48.519Z] UserID: shis, Infection: No, Score: 0, ImageType: nonInfrared, pain: No, swelling: No, crust: No, redness: No, secretion: No, Filename: shis_No_0_nonInfrared_1753336188074.jpg
+[2025-07-24T06:08:59.800Z] UserID: shis, Infection: No, Score: 4, ImageType: nonInfrared, pain: No, swelling: >0.5cm, crust: <0.5cm, redness: No, secretion: Clear Watery, Filename: shis_No_4_nonInfrared_1753337339168.jpg
