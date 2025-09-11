@@ -651,8 +651,8 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
       </html>`;
     res.send(html);
   } catch (err) {
-  console.error('Error loading gallery:', err.message, err.stack);
-  res.status(500).send('Error loading gallery: ' + err.message);
+    console.error('Error loading gallery:', err);
+    res.status(500).send('Error loading gallery.');
   }
 });
 
@@ -737,90 +737,53 @@ app.get('/view-log', requireLogin, requireAdmin, async (req, res) => {
 // ===================================================================
 app.get('/view-users', requireLogin, requireAdmin, (req, res) => {
   const users = db.prepare(`
-    SELECT u.userId,
-           u.locked,
-           COALESCE(us.role, u.role, 'user') AS role,
-           COALESCE(us.twofaEnabled, 0) AS twofaEnabled
+    SELECT u.userId, COALESCE(us.role, u.role, 'user') AS role,
+           us.twofaEnabled AS twofaEnabled
     FROM users u
     LEFT JOIN user_security us ON u.userId = us.userId
+    ORDER BY u.userId
   `).all();
 
-  const html = `
+  const rows = users.map(u => `
+    <tr>
+      <td>${escapeHtml(u.userId)}</td>
+      <td>${escapeHtml(u.role)}</td>
+      <td>${u.twofaEnabled ? '✅' : ''}</td>
+      <td>
+        <form method="POST" action="/set-role" style="display:inline;">
+          <input type="hidden" name="userId" value="${escapeHtml(u.userId)}" />
+          <select name="role">
+            <option value="user"${u.role === 'user' ? ' selected' : ''}>User</option>
+            <option value="admin"${u.role === 'admin' ? ' selected' : ''}>Admin</option>
+          </select>
+          <button type="submit">Update</button>
+        </form>
+      </td>
+    </tr>
+  `).join('');
+
+  res.send(`
     <html>
     <head>
       <title>Users</title>
       <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-        th { background: #f4f4f4; }
-        form { display: inline; }
-        button { padding: 4px 8px; margin: 0 2px; cursor: pointer; }
+        table { border-collapse: collapse; width: 80%; margin: auto; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align:left; }
+        th { background: #f0f0f0; }
       </style>
     </head>
     <body>
-      <h1>Registered Users</h1>
+      <h1 style="text-align:center;">Registered Users</h1>
       <table>
-        <thead>
-          <tr>
-            <th>User ID</th>
-            <th>Role</th>
-            <th>2FA Enabled</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${users.map(u => `
-            <tr>
-              <td>${escapeHtml(u.userId)}</td>
-              <td>${escapeHtml(u.role)}</td>
-              <td>${u.twofaEnabled ? '✅' : '❌'}</td>
-              <td>${u.locked ? '🔒 Locked' : '✅ Active'}</td>
-              <td>
-                ${u.userId !== 'admin' ? (
-                  u.locked
-                    ? `<form method="post" action="/unlock-user">
-                         <input type="hidden" name="userId" value="${u.userId}" />
-                         <button type="submit">Unlock</button>
-                       </form>`
-                    : `<form method="post" action="/lock-user">
-                         <input type="hidden" name="userId" value="${u.userId}" />
-                         <button type="submit">Lock</button>
-                       </form>`
-                ) : '—'}
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
+        <tr><th>User ID</th><th>Role</th><th>2FA</th><th>Change Role</th></tr>
+        ${rows}
       </table>
+      <div style="text-align:center;margin-top:20px;">
+        <a href="/dashboard">Back to Dashboard</a>
+      </div>
     </body>
     </html>
-  `;
-  res.send(html);
-});
-
-// ===================================================================
-//                           LOCK USER
-// ===================================================================
-app.post('/lock-user', requireLogin, requireAdmin, (req, res) => {
-  const { userId } = req.body;
-
-  if (userId === 'admin') {
-    return res.status(400).send('You cannot lock the admin account');
-  }
-
-  db.prepare(`UPDATE users SET locked = 1 WHERE userId = ?`).run(userId);
-  res.redirect('/view-users');
-});
-
-// ===================================================================
-//                           UNLOCK USER
-// ===================================================================
-app.post('/unlock-user', requireLogin, requireAdmin, (req, res) => {
-  const { userId } = req.body;
-  db.prepare(`UPDATE users SET locked = 0 WHERE userId = ?`).run(userId);
-  res.redirect('/view-users');
+  `);
 });
 
 // ===================================================================
@@ -856,40 +819,6 @@ app.get('/dashboard', requireLogin, requireAdmin, requirePasswordChange, (req, r
   `);
 });
 
-
-
-app.get('/debug-users', (req, res) => {
-  const rows = db.prepare(`SELECT * FROM user_security`).all();
-
-  const html = `
-    <html>
-    <head>
-      <title>Users Debug</title>
-      <style>
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-        th { background: #eee; }
-      </style>
-    </head>
-    <body>
-      <h1>Users Table (Debug)</h1>
-      <table>
-        <thead>
-          <tr>${Object.keys(rows[0] || {}).map(c => `<th>${c}</th>`).join('')}</tr>
-        </thead>
-        <tbody>
-          ${rows.map(r => `
-            <tr>${Object.values(r).map(v => `<td>${v}</td>`).join('')}</tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </body>
-    </html>
-  `;
-
-  res.send(html);
-});
-
 // ===================================================================
 //                           ROOT
 // ===================================================================
@@ -898,12 +827,4 @@ app.get('/', (req, res) => res.send('Server is up and running!'));
 // ===================================================================
 //                           START SERVER
 // ===================================================================
-//app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
-app.listen(8080, () => {
-  console.log("Server started on port 8080");
-
-  // Temporary fix: unlock admin on startup
- //db.prepare(`UPDATE user_security SET twofaEnabled = 0 WHERE userId = 'admin'`).run();
- //db.prepare(`UPDATE user_security SET twofaEnabled  = 0 WHERE userId = 'shis'`).run();
- //console.log("✅ Admin unlocked at startup");
-});
+app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
