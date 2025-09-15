@@ -10,8 +10,6 @@ const path = require('path');
 const session = require('express-session');
 const archiver = require('archiver');
 const { Storage } = require('@google-cloud/storage');
-const bodyParser = require('body-parser');
-const { loadDatabase, saveDatabase, getDB } = require('./dbManager');
 // --- 2FA deps ---
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
@@ -19,16 +17,10 @@ const QRCode = require('qrcode');
 const db = require('./db');
 
 const app = express();
-app.use(bodyParser.json());
 const PORT = process.env.PORT || 8080;
 const SECRET_KEY = process.env.SECRET_KEY || 'dev_only_change_me';
 const sessionSecret = process.env.SESSION_SECRET || 'fallback_secret_for_dev_only';
 const TOTP_ISSUER = process.env.TOTP_ISSUER || 'CatheUpload';
-
-// Load DB from Cloud Storage on startup
-(async () => {
-  await loadDatabase();
-})();
 
 const authenticateJWT = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -42,10 +34,36 @@ const authenticateJWT = (req, res, next) => {
     next();
   });
 };
+
+// dbManager.js
+const { Storage } = require('@google-cloud/storage');
+const Database = require('better-sqlite3');
+const fs = require('fs');
+const path = require('path');
+
 // ---------------- Google Cloud Storage ----------------
 const storage = new Storage();
 const bucketName = process.env.GCS_BUCKET || 'cathe-uploads';
 const bucket = storage.bucket(bucketName);
+const dbFile = path.join(__dirname, 'users.db');
+let db;
+
+// ---------------- Download DB file from GCS bucket----------------
+async function loadDatabase() {
+  const file = storage.bucket(bucketName).file('users.db');
+  const [exists] = await file.exists();
+
+  if (exists) {
+    await file.download({ destination: dbFile });
+    console.log('✅ users.db downloaded from Cloud Storage');
+  } else {
+    console.log('⚠️ No users.db found in bucket, starting fresh.');
+  }
+
+  db = new Database(dbFile);
+  createUsersTable();
+}
+
 
 // ---------------- Session ----------------
 app.use(session({
@@ -831,18 +849,7 @@ app.get('/dashboard', requireLogin, requireAdmin, requirePasswordChange, (req, r
 //                           ROOT
 // ===================================================================
 app.get('/', (req, res) => res.send('Server is up and running!'));
-// Save DB on shutdown
-  process.on('SIGTERM', async () => {
-    console.log('SIGTERM received, saving DB...');
-    await saveDatabase();
-    process.exit(0);
-  });
 
-  process.on('SIGINT', async () => {
-    console.log('SIGINT received, saving DB...');
-    await saveDatabase();
-    process.exit(0);
-  });
 // ===================================================================
 //                           START SERVER
 // ===================================================================
