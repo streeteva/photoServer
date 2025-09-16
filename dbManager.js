@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const storage = new Storage();
-const bucketName = process.env.DB_BUCKET || 'photo-uploader-db';
+const bucketName = process.env.DB_BUCKET || 'cathe-uploads';
 const dbFile = path.join(__dirname, 'users.db');
 let db;
 
