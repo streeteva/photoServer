@@ -630,14 +630,12 @@ app.post('/set-role', requireLogin, requireAdmin, (req, res) => {
 app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
   try {
     const [files] = await bucket.getFiles();
-    // Filter image files
     const imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
 
-    // Generate URLs for Cloud Run (use public URL or pre-signed if desired)
-    const urls = imageFiles.map(f => ({
-      name: f.name,
-      url: `https://storage.googleapis.com/${bucket.name}/${encodeURIComponent(f.name)}`
-    }));
+    const signedUrls = await Promise.all(imageFiles.map(file =>
+      file.getSignedUrl({ version: 'v4', action: 'read', expires: Date.now() + 15 * 60 * 1000 })
+          .then(([url]) => ({ name: file.name, url }))
+    ));
 
     const html = `
       <html>
@@ -660,25 +658,22 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
           <a class="download-btn" href="/download-all">⬇ Download All Photos</a>
         </div>
         <div class="gallery">
-          ${urls.map(f => `
+          ${signedUrls.map(file => `
             <div class="photo">
-              <img src="${f.url}" alt="${escapeHtml(f.name)}" />
-              <div class="filename">${escapeHtml(f.name)}</div>
-              <a href="/download/${encodeURIComponent(f.name)}">Download</a>
+              <img src="${file.url}" alt="${escapeHtml(file.name)}" />
+              <div class="filename">${escapeHtml(file.name)}</div>
+              <a href="/download/${encodeURIComponent(file.name)}">Download</a>
             </div>
           `).join('')}
         </div>
       </body>
-      </html>
-    `;
+      </html>`;
     res.send(html);
-
   } catch (err) {
     console.error('Error loading gallery:', err);
     res.status(500).send('Error loading gallery.');
   }
 });
-
 // ===================================================================
 //                   SINGLE / BULK DOWNLOADS
 // ===================================================================
