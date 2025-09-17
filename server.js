@@ -52,7 +52,7 @@ function getUserSecurity(userId) {
   return db.prepare('SELECT * FROM user_security WHERE userId = ?').get(userId);
 }
 
-function setUserSecurityState(userId, fields) {
+async function setUserSecurityState(userId, fields) {
   const cur = getUserSecurity(userId) || {};
   const upd = { ...cur, userId, ...fields };
   db.prepare(`
@@ -72,6 +72,7 @@ function setUserSecurityState(userId, fields) {
     upd.twofaLocked ?? cur.twofaLocked ?? 0,
     upd.twofaLockedUntil ?? cur.twofaLockedUntil ?? null
   );
+    await saveDatabase();
 }
 
 function ensureUsersTableHasRole() {
@@ -149,14 +150,14 @@ async function initDatabase() {
 
   const adminSec = getUserSecurity('admin');
   if (!adminSec) {
-    setUserSecurityState('admin', {
+    await setUserSecurityState('admin', {
       role: 'admin',
       failedLoginAttempts: 0,
       isLocked: 0,
       forceChangePassword: 1,
       twofaEnabled: 0
     });
-    addPasswordHistory('admin', adminUser?.password || bcrypt.hashSync('Admin@12345', 12));
+    addPasswordHistory('admin', adminUser?.password || hashedPassword);
     console.log('✅ Admin user_security record created.');
   }
 
@@ -164,7 +165,7 @@ async function initDatabase() {
   const existingUsers = db.prepare('SELECT userId, role, password FROM users').all();
   for (const u of existingUsers) {
     if (!getUserSecurity(u.userId)) {
-      setUserSecurityState(u.userId, {
+      await setUserSecurityState(u.userId, {
         role: u.role || 'user',
         failedLoginAttempts: 0,
         isLocked: 0,
@@ -284,12 +285,12 @@ app.post('/mainLogin', async (req, res) => {
   if (!match) {
     const newFailures = (sec?.failedLoginAttempts || 0) + 1;
     const lock = newFailures >= 5 ? 1 : 0;
-    setUserSecurityState(userId, { failedLoginAttempts: newFailures, isLocked: lock });
+    await setUserSecurityState(userId, { failedLoginAttempts: newFailures, isLocked: lock });
     return res.status(401).send(lock ? 'Account locked. Contact admin.' : 'Invalid credentials.');
   }
 
   // password ok -> clear failures
-  setUserSecurityState(userId, { failedLoginAttempts: 0 });
+  await setUserSecurityState(userId, { failedLoginAttempts: 0 });
 
   // If password change required -> send change form BEFORE 2FA
   if (sec?.forceChangePassword) {
@@ -354,7 +355,7 @@ app.get('/admin-2fa', (req, res) => {
   `);
 });
 
-app.post('/admin-2fa', (req, res) => {
+app.post('/admin-2fa', async (req, res) => {
   if (!isPending2FA(req)) return res.redirect('/mainLogin');
   const { token } = req.body;
   const userId = req.session.pending2FAUserId;
@@ -373,7 +374,7 @@ app.post('/admin-2fa', (req, res) => {
   if (!verified) {
     const attempts = (sec.twofaFailedAttempts || 0) + 1;
     const lock = attempts >= 5 ? 1 : 0;
-    setUserSecurityState(userId, {
+    await setUserSecurityState(userId, {
       twofaFailedAttempts: attempts,
       twofaLocked: lock,
       twofaLockedUntil: lock ? new Date().toISOString() : sec.twofaLockedUntil
@@ -382,7 +383,7 @@ app.post('/admin-2fa', (req, res) => {
   }
 
   // success -> reset counts & login
-  setUserSecurityState(userId, { twofaFailedAttempts: 0, twofaLocked: 0 });
+  await setUserSecurityState(userId, { twofaFailedAttempts: 0, twofaLocked: 0 });
   req.session.regenerate(err => {
     if (err) return res.status(500).send('Session error.');
     req.session.userId = userId;
@@ -418,7 +419,7 @@ app.get('/admin-2fa-setup-first-time', (req, res) => {
   `);
 });
 
-app.post('/admin-2fa-setup-first-time', (req, res) => {
+app.post('/admin-2fa-setup-first-time', async (req, res) => {
   const userId = req.session.temp2FAUserId;
   const tempSecret = req.session.temp2FASecret;
   if (!userId || !tempSecret) {
@@ -439,7 +440,7 @@ app.post('/admin-2fa-setup-first-time', (req, res) => {
   }
 
   // Save 2FA secret and enable 2FA permanently in security state
-  setUserSecurityState(userId, {
+  await setUserSecurityState(userId, {
     twofaSecret: tempSecret,
     twofaEnabled: 1,
     twofaFailedAttempts: 0,
@@ -490,7 +491,7 @@ app.post('/change-password', async (req, res) => {
 
   const hashed = await bcrypt.hash(newPassword, 12);
   db.prepare('UPDATE users SET password = ? WHERE userId = ?').run(hashed, userId);
-  setUserSecurityState(userId, { forceChangePassword: 0, passwordChangedAt: new Date().toISOString() });
+  await setUserSecurityState(userId, { forceChangePassword: 0, passwordChangedAt: new Date().toISOString() });
   addPasswordHistory(userId, hashed);
   delete req.session.pendingPwChangeUserId;
   res.send('Password changed. <a href="/mainLogin">Login</a>');
@@ -518,7 +519,7 @@ app.post('/register', async (req, res) => {
   const hashedPassword = await bcrypt.hash(password, 12);
   db.prepare('INSERT INTO users (userId, password, role) VALUES (?, ?, ?)').run(userId, hashedPassword, role);
   // Force first login change per policy (can disable if you don't want)
-  setUserSecurityState(userId, { role, failedLoginAttempts: 0, isLocked: 0, forceChangePassword: 1 });
+  await setUserSecurityState(userId, { role, failedLoginAttempts: 0, isLocked: 0, forceChangePassword: 1 });
   addPasswordHistory(userId, hashedPassword);
 
   const token = jwt.sign({ userId, role }, SECRET_KEY, { expiresIn: '1h' });
@@ -540,11 +541,11 @@ app.post('/login', async (req, res) => {
   if (!ok) {
     const newFailures = (sec.failedLoginAttempts || 0) + 1;
     const lock = newFailures >= 5 ? 1 : 0;
-    setUserSecurityState(userId, { failedLoginAttempts: newFailures, isLocked: lock });
+    await setUserSecurityState(userId, { failedLoginAttempts: newFailures, isLocked: lock });
     return res.status(401).json({ message: lock ? 'Account locked.' : 'Incorrect password.', attempts: newFailures, locked: !!lock });
   }
 
-  setUserSecurityState(userId, { failedLoginAttempts: 0 });
+  await setUserSecurityState(userId, { failedLoginAttempts: 0 });
 
   const token = jwt.sign({ userId, role: sec.role }, SECRET_KEY, { expiresIn: '7d' });
   if (sec.forceChangePassword) {
@@ -574,7 +575,7 @@ app.post('/change-password-mobile', async (req, res) => {
 
     const hashed = await bcrypt.hash(newPassword, 12);
     db.prepare('UPDATE users SET password = ? WHERE userId = ?').run(hashed, userId);
-    setUserSecurityState(userId, { forceChangePassword: 0, passwordChangedAt: new Date().toISOString() });
+    await setUserSecurityState(userId, { forceChangePassword: 0, passwordChangedAt: new Date().toISOString() });
     addPasswordHistory(userId, hashed);
 
     res.json({ success: true, message: 'Password changed successfully.' });
@@ -624,7 +625,7 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
 // ===================================================================
 //                           ROLE MANAGEMENT
 // ===================================================================
-app.post('/set-role', requireLogin, requireAdmin, (req, res) => {
+app.post('/set-role', requireLogin, requireAdmin, async (req, res) => {
   const { userId, role } = req.body;
   if (!['admin', 'user'].includes(role)) {
     return res.status(400).json({ message: 'Invalid role. Use admin or user.' });
@@ -634,7 +635,7 @@ app.post('/set-role', requireLogin, requireAdmin, (req, res) => {
   if (!user) return res.status(404).json({ message: 'User not found' });
 
   db.prepare('UPDATE users SET role = ? WHERE userId = ?').run(role, userId);
-  setUserSecurityState(userId, { role });
+  await setUserSecurityState(userId, { role });
 
   if (req.session.userId === userId) req.session.role = role;
 
@@ -832,11 +833,11 @@ app.get('/view-users', requireLogin, requireAdmin, (req, res) => {
 // ===================================================================
 //                          UNLOCK USERS
 // ===================================================================
-app.post('/unlock-user', requireLogin, requireAdmin, (req, res) => {
+app.post('/unlock-user', requireLogin, requireAdmin, async (req, res) => {
   const { userId } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE userId = ?').get(userId);
   if (!user) return res.status(404).json({ message: 'User not found' });
-  setUserSecurityState(userId, {
+  await setUserSecurityState(userId, {
     isLocked: 0,
     failedLoginAttempts: 0,
     twofaLocked: 0,
