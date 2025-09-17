@@ -17,28 +17,19 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 
 const db = require('./db');
-
 const app = express();
+app.use(bodyParser.json());
+
 const PORT = process.env.PORT || 8080;
-const SECRET_KEY = process.env.SECRET_KEY || 'PRoAJStun8wgCFH3KrTCDiEDaufPQmUW';
-const sessionSecret = process.env.SESSION_SECRET || '1752dcbe0ca22af3fe223e5e359772c0130355a4ce087168d6f213fe11bdb46d';
+const SECRET_KEY = process.env.SECRET_KEY || 'dev_only_change_me';
+const sessionSecret = process.env.SESSION_SECRET || 'fallback_secret_for_dev_only';
 const TOTP_ISSUER = process.env.TOTP_ISSUER || 'CatheUpload';
+
 // ---------------- Google Cloud Storage ----------------
 const storage = new Storage();
 const bucketName = process.env.GCS_BUCKET || 'cathe-uploads';
 const localDbPath = './users.db';
 const bucket = storage.bucket(bucketName);
-
-// --------Load DB from Cloud Storage on startup--------------
-const { loadDatabase, saveDatabase } = require('./dbManager');
-
-(async () => {
-  await loadDatabase(); // restore + load local DB
-  initSecurityTable();
-  initPasswordHistoryTable();
-  ensureAdminUser()
-  console.log('✅ Database loaded and tables initialized.');
-});
 
 const authenticateJWT = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -52,6 +43,145 @@ const authenticateJWT = (req, res, next) => {
     next();
   });
 };
+
+// ---------- Database Init & Startup ----------
+const { loadDatabase, saveDatabase } = require('./dbManager');
+
+// -----------Helper functions--------------------
+function getUserSecurity(userId) {
+  return db.prepare('SELECT * FROM user_security WHERE userId = ?').get(userId);
+}
+
+function setUserSecurityState(userId, fields) {
+  const cur = getUserSecurity(userId) || {};
+  const upd = { ...cur, userId, ...fields };
+  db.prepare(`
+    INSERT OR REPLACE INTO user_security
+    (userId, role, failedLoginAttempts, isLocked, forceChangePassword, passwordChangedAt, twofaEnabled, twofaSecret, twofaFailedAttempts, twofaLocked, twofaLockedUntil)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    upd.userId,
+    upd.role ?? cur.role ?? 'user',
+    upd.failedLoginAttempts ?? cur.failedLoginAttempts ?? 0,
+    upd.isLocked ?? cur.isLocked ?? 0,
+    upd.forceChangePassword ?? cur.forceChangePassword ?? 0,
+    upd.passwordChangedAt ?? cur.passwordChangedAt ?? new Date().toISOString(),
+    upd.twofaEnabled ?? cur.twofaEnabled ?? 0,
+    upd.twofaSecret ?? cur.twofaSecret ?? null,
+    upd.twofaFailedAttempts ?? cur.twofaFailedAttempts ?? 0,
+    upd.twofaLocked ?? cur.twofaLocked ?? 0,
+    upd.twofaLockedUntil ?? cur.twofaLockedUntil ?? null
+  );
+}
+
+function ensureUsersTableHasRole() {
+  const cols = db.prepare("PRAGMA table_info(users)").all();
+  const hasRole = cols.some(c => c.name === 'role');
+  if (!hasRole) {
+    db.prepare("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'").run();
+    console.log("✅ Added missing 'role' column to users table.");
+  }
+}
+
+function addPasswordHistory(userId, hashedPassword) {
+  db.prepare(`INSERT INTO password_history (userId, password, changedAt) VALUES (?, ?, ?)`)
+    .run(userId, hashedPassword, new Date().toISOString());
+
+  const rows = db.prepare(`SELECT rowid FROM password_history WHERE userId = ? ORDER BY changedAt DESC`).all(userId);
+  if (rows.length > 5) {
+    const oldIds = rows.slice(5).map(r => r.rowid);
+    db.prepare(`DELETE FROM password_history WHERE rowid IN (${oldIds.map(() => '?').join(',')})`).run(...oldIds);
+  }
+}
+
+function isPasswordInHistory(userId, newPassword) {
+  const past = db.prepare(`SELECT password FROM password_history WHERE userId = ?`).all(userId);
+  return past.some(p => bcrypt.compareSync(newPassword, p.password));
+}
+
+// ------------------Main DB init---------------------------
+async function initDatabase() {
+  // 1️⃣ Load existing DB (local/cloud)
+  await loadDatabase();
+
+  // 2️⃣ Create tables if missing
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS users (
+      userId TEXT PRIMARY KEY,
+      password TEXT NOT NULL,
+      role TEXT DEFAULT 'user'
+    )
+  `).run();
+
+  ensureUsersTableHasRole();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS user_security (
+      userId TEXT PRIMARY KEY,
+      role TEXT DEFAULT 'user',
+      failedLoginAttempts INTEGER DEFAULT 0,
+      isLocked INTEGER DEFAULT 0,
+      forceChangePassword INTEGER DEFAULT 0,
+      passwordChangedAt TEXT,
+      twofaEnabled INTEGER DEFAULT 0,
+      twofaSecret TEXT,
+      twofaFailedAttempts INTEGER DEFAULT 0,
+      twofaLocked INTEGER DEFAULT 0,
+      twofaLockedUntil TEXT
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS password_history (
+      userId TEXT,
+      password TEXT,
+      changedAt TEXT
+    )
+  `).run();
+
+  // 3️⃣ Seed default admin if missing
+  const adminUser = db.prepare('SELECT * FROM users WHERE userId = ?').get('admin');
+  if (!adminUser) {
+    const hashedPassword = bcrypt.hashSync('Admin@12345', 12);
+    db.prepare('INSERT INTO users (userId, password, role) VALUES (?, ?, ?)').run('admin', hashedPassword, 'admin');
+    console.log('✅ Default admin created in users table.');
+  }
+
+  const adminSec = getUserSecurity('admin');
+  if (!adminSec) {
+    setUserSecurityState('admin', {
+      role: 'admin',
+      failedLoginAttempts: 0,
+      isLocked: 0,
+      forceChangePassword: 1,
+      twofaEnabled: 0
+    });
+    addPasswordHistory('admin', adminUser?.password || bcrypt.hashSync('Admin@12345', 12));
+    console.log('✅ Admin user_security record created.');
+  }
+
+  // 4️⃣ Ensure all existing users have security & password history
+  const existingUsers = db.prepare('SELECT userId, role, password FROM users').all();
+  for (const u of existingUsers) {
+    if (!getUserSecurity(u.userId)) {
+      setUserSecurityState(u.userId, {
+        role: u.role || 'user',
+        failedLoginAttempts: 0,
+        isLocked: 0,
+        forceChangePassword: 0
+      });
+      addPasswordHistory(u.userId, u.password);
+    }
+  }
+
+  console.log('✅ Database initialization complete.');
+}
+
+
+// ---------- Startup ----------
+(async () => {
+  await initDatabase();       // create tables & seed admin
+})();
 
 // ---------------- Middleware ----------------
 app.use(cors());
@@ -82,66 +212,6 @@ app.use(session({
   cookie: { maxAge: 60 * 60 * 1000 } // 1 hour
 }));
 
-// ==================== DB Tables & Admin ====================
-const initSecurityTable = () => {
-  // user_security table
-  db.prepare(`
-    CREATE TABLE IF NOT EXISTS user_security (
-      userId TEXT PRIMARY KEY,
-      role TEXT DEFAULT 'user',
-      failedLoginAttempts INTEGER DEFAULT 0,
-      isLocked INTEGER DEFAULT 0,
-      forceChangePassword INTEGER DEFAULT 0,
-      passwordChangedAt TEXT,
-      twofaEnabled INTEGER DEFAULT 0,
-      twofaSecret TEXT,
-      twofaFailedAttempts INTEGER DEFAULT 0,
-      twofaLocked INTEGER DEFAULT 0,
-      twofaLockedUntil TEXT
-    )
-  `).run();
-
-  // Seed admin if missing
-  const adminSec = db.prepare('SELECT * FROM user_security WHERE userId = ?').get('admin');
-  if (!adminSec) {
-    db.prepare(`
-      INSERT INTO user_security
-      (userId, role, failedLoginAttempts, isLocked, forceChangePassword, passwordChangedAt, twofaEnabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run('admin', 'admin', 0, 0, 1, new Date().toISOString(), 0);
-    console.log('✅ Admin user_security record created.');
-  }
-};
-
-// password_history table
-const initPasswordHistoryTable = () => {
-  db.prepare(`
-    CREATE TABLE IF NOT EXISTS password_history (
-      userId TEXT,
-      password TEXT,
-      changedAt TEXT
-    )
-  `).run();
-};
-
-
-// ---------------- Ensure default admin ----------------
-function ensureAdminUser() {
-  const adminUser = db.prepare('SELECT * FROM users WHERE userId = ?').get('admin');
-  if (!adminUser) {
-    const hashedPassword = bcrypt.hashSync('Admin@12345', 12);
-    db.prepare('INSERT INTO users (userId, password, role) VALUES (?, ?, ?)').run('admin', hashedPassword, 'admin');
-    setUserSecurityState('admin', {
-      role: 'admin',
-      failedLoginAttempts: 0,
-      isLocked: 0,
-      forceChangePassword: 1,
-      twofaEnabled: 0
-    });
-    addPasswordHistory('admin', hashedPassword);
-    console.log('Default admin created: userId=admin, password=Admin@12345');
-  }
-}
 
 // ---------------- Password Policy ----------------
 const validateUserId = (userId) => /^[a-zA-Z0-9_]{4,20}$/.test(userId);
@@ -159,59 +229,6 @@ const validatePassword = (password, role = 'user', userId = '') => {
   return cats >= 2;
 };
 
-function addPasswordHistory(userId, hashedPassword) {
-  db.prepare(`INSERT INTO password_history (userId, password, changedAt) VALUES (?, ?, ?)`)
-    .run(userId, hashedPassword, new Date().toISOString());
-  const rows = db.prepare(`SELECT rowid FROM password_history WHERE userId = ? ORDER BY changedAt DESC`).all(userId);
-  if (rows.length > 5) {
-    const oldIds = rows.slice(5).map(r => r.rowid);
-    db.prepare(`DELETE FROM password_history WHERE rowid IN (${oldIds.map(() => '?').join(',')})`).run(...oldIds);
-  }
-}
-
-function isPasswordInHistory(userId, newPassword) {
-  const past = db.prepare(`SELECT password FROM password_history WHERE userId = ?`).all(userId);
-  return past.some(p => bcrypt.compareSync(newPassword, p.password));
-}
-
-function getUserSecurity(userId) {
-  return db.prepare('SELECT * FROM user_security WHERE userId = ?').get(userId);
-}
-
-function setUserSecurityState(userId, fields) {
-  const cur = getUserSecurity(userId) || {};
-  const upd = { ...cur, userId, ...fields };
-  db.prepare(`
-    INSERT OR REPLACE INTO user_security
-    (userId, role, failedLoginAttempts, isLocked, forceChangePassword, passwordChangedAt, twofaEnabled, twofaSecret, twofaFailedAttempts, twofaLocked, twofaLockedUntil)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    upd.userId,
-    upd.role ?? cur.role ?? 'user',
-    upd.failedLoginAttempts ?? cur.failedLoginAttempts ?? 0,
-    upd.isLocked ?? cur.isLocked ?? 0,
-    upd.forceChangePassword ?? cur.forceChangePassword ?? 0,
-    upd.passwordChangedAt ?? cur.passwordChangedAt ?? new Date().toISOString(),
-    upd.twofaEnabled ?? cur.twofaEnabled ?? 0,
-    upd.twofaSecret ?? cur.twofaSecret ?? null,
-    upd.twofaFailedAttempts ?? cur.twofaFailedAttempts ?? 0,
-    upd.twofaLocked ?? cur.twofaLocked ?? 0,
-    upd.twofaLockedUntil ?? cur.twofaLockedUntil ?? null
-  );
-}
-
-// Ensure role col in users table (upgrade-safe)
-try { db.prepare('ALTER TABLE users ADD COLUMN role TEXT DEFAULT "user"').run(); } catch (_) {}
-
-// Ensure security rows for all users
-const existingUsers = db.prepare('SELECT userId, role, password FROM users').all();
-for (const u of existingUsers) {
-  if (!getUserSecurity(u.userId)) {
-    setUserSecurityState(u.userId, { role: u.role || 'user', failedLoginAttempts: 0, isLocked: 0, forceChangePassword: 0 });
-    // seed history row if none
-    addPasswordHistory(u.userId, u.password);
-  }
-}
 
 // ---------------- Auth Middleware ----------------
 function requireLogin(req, res, next) {
@@ -674,6 +691,7 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
     res.status(500).send('Error loading gallery.');
   }
 });
+
 // ===================================================================
 //                   SINGLE / BULK DOWNLOADS
 // ===================================================================
@@ -818,7 +836,6 @@ app.post('/unlock-user', requireLogin, requireAdmin, (req, res) => {
   const { userId } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE userId = ?').get(userId);
   if (!user) return res.status(404).json({ message: 'User not found' });
-
   setUserSecurityState(userId, {
     isLocked: 0,
     failedLoginAttempts: 0,
@@ -867,17 +884,18 @@ app.get('/dashboard', requireLogin, requireAdmin, requirePasswordChange, (req, r
 // ===================================================================
 app.get('/', (req, res) => res.send('Server is up and running!'));
 // Save DB on shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, saving DB...');
-  await saveDatabase();
-  process.exit(0);
-});
+  process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, saving DB...');
+    await saveDatabase();
+    process.exit(0);
+  });
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, saving DB...');
-  await saveDatabase();
-  process.exit(0);
-});
+  process.on('SIGINT', async () => {
+    console.log('SIGINT received, saving DB...');
+    await saveDatabase();
+    process.exit(0);
+  });
+
 // ===================================================================
 //                           START SERVER
 // ===================================================================
