@@ -16,7 +16,8 @@ const bodyParser = require('body-parser');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 
-const db = require('./db');
+//const db = require('./db');
+global.db = null;
 const app = express();
 app.use(bodyParser.json());
 
@@ -45,7 +46,8 @@ const authenticateJWT = (req, res, next) => {
 };
 
 // ---------- Database Init & Startup ----------
-const { loadDatabase, saveDatabase } = require('./dbManager');
+const { loadDatabase,saveDatabase } = require('./dbManager');
+
 
 // -----------Helper functions--------------------
 function getUserSecurity(userId) {
@@ -75,23 +77,25 @@ async function setUserSecurityState(userId, fields) {
     await saveDatabase();
 }
 
-function ensureUsersTableHasRole() {
+async function ensureUsersTableHasRole() {
   const cols = db.prepare("PRAGMA table_info(users)").all();
   const hasRole = cols.some(c => c.name === 'role');
   if (!hasRole) {
     db.prepare("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'").run();
+    await saveDatabase();
     console.log("✅ Added missing 'role' column to users table.");
   }
 }
 
-function addPasswordHistory(userId, hashedPassword) {
+async function addPasswordHistory(userId, hashedPassword) {
   db.prepare(`INSERT INTO password_history (userId, password, changedAt) VALUES (?, ?, ?)`)
     .run(userId, hashedPassword, new Date().toISOString());
-
+  await saveDatabase();
   const rows = db.prepare(`SELECT rowid FROM password_history WHERE userId = ? ORDER BY changedAt DESC`).all(userId);
   if (rows.length > 5) {
     const oldIds = rows.slice(5).map(r => r.rowid);
     db.prepare(`DELETE FROM password_history WHERE rowid IN (${oldIds.map(() => '?').join(',')})`).run(...oldIds);
+    await saveDatabase();
   }
 }
 
@@ -103,7 +107,8 @@ function isPasswordInHistory(userId, newPassword) {
 // ------------------Main DB init---------------------------
 async function initDatabase() {
   // 1️⃣ Load existing DB (local/cloud)
-  await loadDatabase();
+  global.db = await loadDatabase();
+  console.log('Users in DB:', db.prepare('SELECT userId FROM users').all());
 
   // 2️⃣ Create tables if missing
   db.prepare(`
@@ -139,12 +144,13 @@ async function initDatabase() {
       changedAt TEXT
     )
   `).run();
-
+  let hashedPassword = null;
   // 3️⃣ Seed default admin if missing
   const adminUser = db.prepare('SELECT * FROM users WHERE userId = ?').get('admin');
   if (!adminUser) {
     const hashedPassword = bcrypt.hashSync('Admin@12345', 12);
     db.prepare('INSERT INTO users (userId, password, role) VALUES (?, ?, ?)').run('admin', hashedPassword, 'admin');
+    await saveDatabase();
     console.log('✅ Default admin created in users table.');
   }
 
@@ -491,6 +497,7 @@ app.post('/change-password', async (req, res) => {
 
   const hashed = await bcrypt.hash(newPassword, 12);
   db.prepare('UPDATE users SET password = ? WHERE userId = ?').run(hashed, userId);
+  await saveDatabase();
   await setUserSecurityState(userId, { forceChangePassword: 0, passwordChangedAt: new Date().toISOString() });
   addPasswordHistory(userId, hashed);
   delete req.session.pendingPwChangeUserId;
@@ -519,6 +526,7 @@ app.post('/register', async (req, res) => {
   const hashedPassword = await bcrypt.hash(password, 12);
   db.prepare('INSERT INTO users (userId, password, role) VALUES (?, ?, ?)').run(userId, hashedPassword, role);
   // Force first login change per policy (can disable if you don't want)
+  await saveDatabase();
   await setUserSecurityState(userId, { role, failedLoginAttempts: 0, isLocked: 0, forceChangePassword: 1 });
   addPasswordHistory(userId, hashedPassword);
 
@@ -576,6 +584,7 @@ app.post('/change-password-mobile', async (req, res) => {
     const hashed = await bcrypt.hash(newPassword, 12);
     db.prepare('UPDATE users SET password = ? WHERE userId = ?').run(hashed, userId);
     await setUserSecurityState(userId, { forceChangePassword: 0, passwordChangedAt: new Date().toISOString() });
+    await saveDatabase();
     addPasswordHistory(userId, hashed);
 
     res.json({ success: true, message: 'Password changed successfully.' });
@@ -583,6 +592,7 @@ app.post('/change-password-mobile', async (req, res) => {
     res.status(401).json({ message: 'Invalid or expired token', error: err.message });
   }
 });
+
 
 // ===================================================================
 //                           FILE UPLOAD (NO AUTH YET)
@@ -635,6 +645,7 @@ app.post('/set-role', requireLogin, requireAdmin, async (req, res) => {
   if (!user) return res.status(404).json({ message: 'User not found' });
 
   db.prepare('UPDATE users SET role = ? WHERE userId = ?').run(role, userId);
+  await saveDatabase();
   await setUserSecurityState(userId, { role });
 
   if (req.session.userId === userId) req.session.role = role;
