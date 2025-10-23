@@ -102,27 +102,6 @@ function isPasswordInHistory(userId, newPassword) {
   return past.some(p => bcrypt.compareSync(newPassword, p.password));
 }
 
-function isPasswordInHistory(userId, newPassword) {
-  if (!newPassword) {
-    console.warn('⚠️ Missing newPassword in isPasswordInHistory');
-    return false;
-  }
-
-  const past = db.prepare(`SELECT password FROM password_history WHERE userId = ?`).all(userId);
-
-  if (!past || past.length === 0) return false;
-
-  return past.some(p => {
-    if (!p || !p.password) return false; // skip if password missing
-    try {
-      return bcrypt.compareSync(newPassword, p.password);
-    } catch (err) {
-      console.error('⚠️ bcrypt.compareSync failed:', err);
-      return false;
-    }
-  });
-}
-
 
 // ------------------Main DB init---------------------------
 async function initDatabase() {
