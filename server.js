@@ -621,9 +621,9 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
       logEntries.push(`[${new Date().toISOString()}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
     }
 
-    fs.appendFileSync(logFilePath, logEntries.join(''), 'utf8');
-    const logGCSName = `logs/upload_log_${Date.now()}.txt`;
-    await bucket.upload(logFilePath, { destination: logGCSName });
+      const logText = logEntries.join('');
+      const logGCSName = `logs/upload_log_${Date.now()}.txt`;
+      await bucket.file(logGCSName).save(logText);
 
     res.json({ message: 'Upload successful to GCS', files: logEntries.length });
   } catch (err) {
@@ -740,43 +740,80 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
 // ===================================================================
 //                           LOGS
 // ===================================================================
+
+// Download all combined logs as one file
 app.get('/download-log', requireLogin, requireAdmin, async (req, res) => {
   try {
     const [files] = await bucket.getFiles({ prefix: 'logs/' });
     const logFiles = files.filter(f => f.name.endsWith('.txt'));
-    if (!logFiles.length) return res.status(404).send('No log file found.');
 
-    const latest = logFiles.sort((a, b) => b.name.localeCompare(a.name))[0];
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(path.basename(latest.name))}"`);
+    if (!logFiles.length) {
+      return res.status(404).send('No log files found.');
+    }
+
+    // Sort by filename (timestamp)
+    logFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Read and combine all log contents
+    let combinedLogs = '';
+    for (const file of logFiles) {
+      const [content] = await file.download();
+      combinedLogs += content.toString('utf8') + '\n';
+    }
+
+    // Send as downloadable text file
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="combined_upload_logs.txt"'
+    );
     res.setHeader('Content-Type', 'text/plain');
-    latest.createReadStream().pipe(res);
+    res.send(combinedLogs);
   } catch (err) {
-    console.error('Error downloading log:', err);
-    res.status(500).send('Could not download log file.');
+    console.error('Error downloading combined logs:', err);
+    res.status(500).send('Could not download log files.');
   }
 });
 
+
+// View all combined logs in browser
 app.get('/view-log', requireLogin, requireAdmin, async (req, res) => {
   try {
     const [files] = await bucket.getFiles({ prefix: 'logs/' });
     const logFiles = files.filter(f => f.name.endsWith('.txt'));
-    if (!logFiles.length) return res.send('<html><body><h2>No logs found.</h2></body></html>');
 
-    const latest = logFiles.sort((a, b) => b.name.localeCompare(a.name))[0];
-    let logData = '';
-    latest.createReadStream()
-      .on('data', chunk => logData += chunk)
-      .on('end', () => {
-        res.send(`
-          <html>
-          <head><title>Upload Log</title></head>
-          <body><h1>Upload Log</h1><pre>${escapeHtml(logData)}</pre></body>
-          </html>
-        `);
-      });
+    if (!logFiles.length) {
+      return res.send('<html><body><h2>No logs found.</h2></body></html>');
+    }
+
+    // Sort by filename (timestamp)
+    logFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Combine all logs
+    let combinedLogs = '';
+    for (const file of logFiles) {
+      const [content] = await file.download();
+      combinedLogs += content.toString('utf8') + '\n';
+    }
+
+    // Display safely in browser
+    res.send(`
+      <html>
+        <head>
+          <title>Upload Logs</title>
+          <style>
+            body { font-family: monospace; background: #fafafa; color: #333; }
+            pre { white-space: pre-wrap; word-wrap: break-word; }
+          </style>
+        </head>
+        <body>
+          <h1>Combined Upload Logs</h1>
+          <pre>${escapeHtml(combinedLogs)}</pre>
+        </body>
+      </html>
+    `);
   } catch (err) {
-    console.error('Error reading log from GCS:', err);
-    res.status(500).send('Could not read log file.');
+    console.error('Error reading combined logs from GCS:', err);
+    res.status(500).send('Could not read log files.');
   }
 });
 
