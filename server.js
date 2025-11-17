@@ -618,7 +618,7 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
       const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${Date.now()}${ext}`;
       await bucket.upload(file.path, { destination: filename, metadata: { contentType: file.mimetype } });
       fs.unlinkSync(file.path);
-      logEntries.push(`[${new Date().toISOString()}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
+      logEntries.push(`[${new Date().toLocaleString("sv-SE").replace(" ", "T")}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
     }
 
       const logText = logEntries.join('');
