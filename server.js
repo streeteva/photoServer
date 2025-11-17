@@ -255,6 +255,12 @@ function requirePasswordChange(req, res, next) {
   next();
 }
 
+function getSingaporeTimestamp() {
+  return new Date()
+    .toLocaleString("sv-SE", { timeZone: "Asia/Singapore" })
+    .replace(" ", "T");
+}
+
 // Helper to see if a 2FA challenge is pending
 const isPending2FA = (req) => Boolean(req.session?.pending2FAUserId);
 
@@ -616,9 +622,10 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
     for (const file of req.files) {
       const ext = path.extname(file.originalname);
       const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${Date.now()}${ext}`;
+      const timestamp = getSingaporeTimestamp();
       await bucket.upload(file.path, { destination: filename, metadata: { contentType: file.mimetype } });
       fs.unlinkSync(file.path);
-      logEntries.push(`[${new Date().toLocaleString("sv-SE").replace(" ", "T")}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
+      logEntries.push(`[${timestamp}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
     }
 
       const logText = logEntries.join('');
