@@ -102,7 +102,12 @@ function isPasswordInHistory(userId, newPassword) {
   return past.some(p => bcrypt.compareSync(newPassword, p.password));
 }
 
-
+function getLabelMap() {
+  const rows = db.prepare("SELECT filename, label, created_at FROM image_labels").all();
+  const map = {};
+  rows.forEach(r => map[r.filename] = r);
+  return map;
+}
 // ------------------Main DB init---------------------------
 async function initDatabase() {
   // 1️⃣ Load existing DB (local/cloud)
@@ -117,6 +122,7 @@ async function initDatabase() {
       role TEXT DEFAULT 'user'
     )
   `).run();
+
   const users = db.prepare('SELECT userId FROM users').all();
   console.log('Users in DB:', users);
   ensureUsersTableHasRole();
@@ -144,6 +150,16 @@ async function initDatabase() {
       changedAt TEXT
     )
   `).run();
+
+  db.prepare(`
+  CREATE TABLE IF NOT EXISTS image_labels (
+    filename TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+
+
   let hashedPassword = null;
   // 3️⃣ Seed default admin if missing
   const adminUser = db.prepare('SELECT * FROM users WHERE userId = ?').get('admin');
@@ -661,53 +677,172 @@ app.post('/set-role', requireLogin, requireAdmin, async (req, res) => {
 });
 
 // ===================================================================
+//                           SET LABEL
+// ===================================================================
+app.post('/set-label', requireLogin, requireAdmin, async (req, res) => {
+  const { filename, label } = req.body;
+
+  try {
+    db.prepare(`
+      INSERT INTO image_labels (filename, label, created_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(filename)
+      DO UPDATE SET
+        label = excluded.label,
+        created_at = CURRENT_TIMESTAMP
+    `).run(filename, label);
+    await saveDatabase();
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('DB update failed:', err);
+    res.status(500).json({ error: 'DB update failed' });
+  }
+});
+
+
+// ===================================================================
 //                           GALLERY
 // ===================================================================
 app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
   try {
+    const { label = "all", startDate = "", endDate = "" } = req.query;
+
+    // 1️⃣ Fetch files from GCS
     const [files] = await bucket.getFiles();
-    const imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
+    let imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
 
-    const signedUrls = await Promise.all(imageFiles.map(file =>
-      file.getSignedUrl({ version: 'v4', action: 'read', expires: Date.now() + 15 * 60 * 1000 })
-          .then(([url]) => ({ name: file.name, url }))
-    ));
+    // 2️⃣ Get labels from DB
+    let labelMap = {};
+    try {
+      labelMap = await getLabelMap(); // may return empty {}
+    } catch (err) {
+      console.warn('Failed to get label map, proceeding with empty map:', err.message);
+    }
 
+    // 3️⃣ Auto-insert missing DB rows with default 'clean'
+    for (const f of imageFiles) {
+      if (!labelMap[f.name]) {
+        db.prepare(`
+          INSERT INTO image_labels (filename, label)
+          VALUES (?, 'clean')
+          ON CONFLICT(filename) DO NOTHING
+        `).run(f.name, f.metadata.timeCreated);
+
+        // Refresh labelMap entry
+        const row = db.prepare("SELECT filename, label, created_at FROM image_labels WHERE filename = ?").get(f.name);
+        labelMap[f.name] = row;
+      }
+    }
+
+    // 4️⃣ Apply label filter
+    if (label !== "all") {
+      imageFiles = imageFiles.filter(f => (labelMap[f.name]?.label || 'clean') === label);
+    }
+
+    // 5️⃣ Apply date filter
+    if (startDate || endDate) {
+      const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
+      const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
+
+      imageFiles = imageFiles.filter(f => {
+        const row = labelMap[f.name];
+        const ts = new Date(row?.created_at || f.metadata.timeCreated).getTime();
+        if (startTs && ts < startTs) return false;
+        if (endTs && ts > endTs) return false;
+        return true;
+      });
+    }
+
+    // 6️⃣ Generate signed URLs safely
+    const signedUrls = await Promise.all(imageFiles.map(async file => {
+      try {
+        const [url] = await file.getSignedUrl({
+          version: 'v4',
+          action: 'read',
+          expires: Date.now() + 15 * 60 * 1000
+        });
+        return { name: file.name, url };
+      } catch (err) {
+        console.warn(`Failed to get signed URL for ${file.name}:`, err.message);
+        return null; // skip this file
+      }
+    }));
+    const validUrls = signedUrls.filter(f => f !== null);
+
+    // 7️⃣ Render HTML
     const html = `
       <html>
       <head>
         <title>Photo Gallery</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 20px; }
-          .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-          .download-btn { background: #007BFF; color: white; padding: 10px 16px; border-radius: 6px; text-decoration: none; font-size: 14px; }
+          body { font-family: Arial; padding: 20px; }
+          .top-bar { display: flex; gap: 20px; margin-bottom: 20px; }
           .gallery { display: flex; flex-wrap: wrap; gap: 16px; }
-          .photo { border: 1px solid #ccc; padding: 8px; width: 200px; }
-          img { max-width: 100%; height: auto; display: block; }
-          .filename { margin-top: 8px; font-size: 14px; word-break: break-all; }
-          a { text-decoration: none; display: block; margin-top: 4px; text-align: center; color: #007BFF; }
+          .photo { width: 200px; border: 1px solid #ccc; padding: 10px; }
+          .filename { margin-top: 6px; font-size: 13px; }
         </style>
+
+        <script>
+          function setLabel(filename, checked) {
+            fetch('/set-label', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ filename, label: checked ? 'infected' : 'clean' })
+            });
+          }
+        </script>
       </head>
       <body>
-        <div class="top-bar">
-          <h1>Uploaded Photos</h1>
-          <a class="download-btn" href="/download-all">⬇ Download All Photos</a>
-        </div>
+
+        <h1>Uploaded Photos</h1>
+
+        <!-- FILTERS -->
+        <form method="get" action="/gallery" class="top-bar">
+          <select name="label">
+            <option value="all" ${label==='all'?'selected':''}>All</option>
+            <option value="infected" ${label==='infected'?'selected':''}>Infected</option>
+            <option value="clean" ${label==='clean'?'selected':''}>Clean</option>
+          </select>
+
+          <input type="date" name="startDate" value="${startDate}">
+          <input type="date" name="endDate" value="${endDate}">
+
+          <button type="submit">Filter</button>
+
+          <a href="/download-all?label=${label}&startDate=${startDate}&endDate=${endDate}">
+            Download Filtered
+          </a>
+        </form>
+
         <div class="gallery">
-          ${signedUrls.map(file => `
+          ${validUrls.map(f => `
             <div class="photo">
-              <img src="${file.url}" alt="${escapeHtml(file.name)}" />
-              <div class="filename">${escapeHtml(file.name)}</div>
-              <a href="/download/${encodeURIComponent(file.name)}">Download</a>
+              <img src="${f.url}" width="100%">
+              <div class="filename">${f.name}</div>
+
+              <label>
+                <input type="checkbox"
+                  ${labelMap[f.name]?.label === 'infected' ? 'checked' : ''}
+                  onchange="setLabel('${f.name}', this.checked)">
+                Infected
+              </label>
+
+              <br>
+              <a href="/download/${encodeURIComponent(f.name)}">Download</a>
             </div>
           `).join('')}
         </div>
+
       </body>
-      </html>`;
+      </html>
+    `;
+
     res.send(html);
+
   } catch (err) {
-    console.error('Error loading gallery:', err);
-    res.status(500).send('Error loading gallery.');
+    console.error('Gallery error:', err);
+    res.status(500).send("Error loading gallery");
   }
 });
 
@@ -730,17 +865,51 @@ app.get('/download/:filename', requireLogin, requireAdmin, async (req, res) => {
 
 app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
   try {
-    const [files] = await bucket.getFiles();
-    const imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
+    const { label = "all", startDate = "", endDate = "" } = req.query;
 
-    res.attachment('all_photos.zip');
+    const [files] = await bucket.getFiles();
+    let imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
+
+    const labelMap = await getLabelMap();
+
+    // Label filter
+    if (label !== "all") {
+      imageFiles = imageFiles.filter(f =>
+        labelMap[f.name] && labelMap[f.name].label === label
+      );
+    }
+
+    // Date filter
+    if (startDate || endDate) {
+      imageFiles = imageFiles.filter(f => {
+        const row = labelMap[f.name];
+        const ts = new Date(row?.created_at || f.metadata?.timeCreated).getTime();
+        if (startDate && ts < new Date(startDate).getTime()) return false;
+        if (endDate && ts > new Date(endDate).getTime()) return false;
+        return true;
+      });
+    }
+
+    if (imageFiles.length === 0) {
+      return res.status(404).send('No images to download');
+    }
+
+    res.attachment('filtered_photos.zip');
     const archive = archiver('zip', { zlib: { level: 9 } });
+
+    archive.on('error', err => { throw err; });
     archive.pipe(res);
-    for (const file of imageFiles) archive.append(file.createReadStream(), { name: file.name });
+
+    for (const file of imageFiles) {
+      const stream = file.createReadStream();
+      archive.append(stream, { name: file.name });
+    }
+
     await archive.finalize();
+
   } catch (err) {
-    console.error('Error zipping GCS files:', err);
-    res.status(500).send('Failed to zip and download files.');
+    console.error(err);
+    res.status(500).send("Failed to zip files");
   }
 });
 
@@ -955,4 +1124,6 @@ app.get('/', (req, res) => res.send('Server is up and running!'));
 // ===================================================================
 //                           START SERVER
 // ===================================================================
-app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+});
