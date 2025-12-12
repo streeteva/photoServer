@@ -727,7 +727,7 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
           INSERT INTO image_labels (filename, label)
           VALUES (?, 'clean')
           ON CONFLICT(filename) DO NOTHING
-        `).run(f.name, f.metadata.timeCreated);
+        `).run(f.name);
 
         // Refresh labelMap entry
         const row = db.prepare("SELECT filename, label, created_at FROM image_labels WHERE filename = ?").get(f.name);
