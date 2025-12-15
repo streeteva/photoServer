@@ -644,7 +644,7 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
       const ext = path.extname(file.originalname);
       //const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${Date.now()}${ext}`;
       const timestamp = getSingaporeTimestamp();
-      const isoTimestamp = new Date(sgTimestamp).toISOString();
+      const isoTimestamp = new Date(timestamp).toISOString();
       const safeTimestamp = isoTimestamp.replace(/[:.]/g, '-'); // 2025-12-15T14-30-45-123Z
       const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${safeTimestamp}${ext}`;
       await bucket.upload(file.path, { destination: filename, metadata: { contentType: file.mimetype } });
