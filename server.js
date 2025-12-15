@@ -864,48 +864,71 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { label = "all", startDate = "", endDate = "" } = req.query;
 
+    // 1️⃣ Fetch files
     const [files] = await bucket.getFiles();
     let imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
 
-    const labelMap = await getLabelMap();
+    // 2️⃣ Get labels
+    let labelMap = {};
+    try {
+      labelMap = await getLabelMap();
+    } catch {
+      labelMap = {};
+    }
 
-    // Label filter
+    // 3️⃣ Auto-insert missing rows (CRITICAL)
+    for (const f of imageFiles) {
+      if (!labelMap[f.name]) {
+        db.prepare(`
+          INSERT INTO image_labels (filename, label)
+          VALUES (?, 'clean')
+          ON CONFLICT(filename) DO NOTHING
+        `).run(f.name);
+
+        labelMap[f.name] = db.prepare(
+          "SELECT filename, label, created_at FROM image_labels WHERE filename = ?"
+        ).get(f.name);
+      }
+    }
+
+    // 4️⃣ Label filter (MATCH gallery)
     if (label !== "all") {
-      imageFiles = imageFiles.filter(f =>
-        labelMap[f.name] && labelMap[f.name].label === label
+      imageFiles = imageFiles.filter(
+        f => (labelMap[f.name]?.label || "clean") === label
       );
     }
 
-    // Date filter
+    // 5️⃣ Date filter (MATCH gallery)
     if (startDate || endDate) {
+      const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
+      const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
+
       imageFiles = imageFiles.filter(f => {
-        const row = labelMap[f.name];
-        const ts = new Date(f.metadata?.timeCreated).getTime();
-        if (startDate && ts < new Date(startDate).getTime()) return false;
-        if (endDate && ts > new Date(endDate).getTime()) return false;
+        const ts = new Date(f.metadata.timeCreated).getTime();
+        if (startTs && ts < startTs) return false;
+        if (endTs && ts > endTs) return false;
         return true;
       });
     }
 
+    // 6️⃣ Guard
     if (imageFiles.length === 0) {
-      return res.status(404).send('No images to download');
+      return res.status(404).send("No images to download");
     }
 
-    res.attachment('filtered_photos.zip');
-    const archive = archiver('zip', { zlib: { level: 9 } });
-
-    archive.on('error', err => { throw err; });
+    // 7️⃣ ZIP
+    res.attachment("filtered_photos.zip");
+    const archive = archiver("zip", { zlib: { level: 9 } });
     archive.pipe(res);
 
-    for (const file of imageFiles) {
-      const stream = file.createReadStream();
-      archive.append(stream, { name: file.name });
+    for (const f of imageFiles) {
+      archive.append(f.createReadStream(), { name: f.name });
     }
 
     await archive.finalize();
 
   } catch (err) {
-    console.error(err);
+    console.error("Download ZIP error:", err);
     res.status(500).send("Failed to zip files");
   }
 });
