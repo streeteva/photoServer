@@ -631,12 +631,24 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
   const extraData = extraFields.map(f => `${f}: ${req.body[f] || 'N/A'}`).join(', ');
 
   const logEntries = [];
+
+  // ✅ Prepare DB statement ONCE
+  const insertImageLabel = db.prepare(`
+      INSERT INTO image_labels (filename, label, created_at)
+      VALUES (?, 'clean', ?)
+      ON CONFLICT(filename) DO NOTHING
+      `);
+
   try {
     for (const file of req.files) {
       const ext = path.extname(file.originalname);
-      const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${Date.now()}${ext}`;
+      //const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${Date.now()}${ext}`;
       const timestamp = getSingaporeTimestamp();
+      const isoTimestamp = new Date(sgTimestamp).toISOString();
+      const safeTimestamp = isoTimestamp.replace(/[:.]/g, '-'); // 2025-12-15T14-30-45-123Z
+      const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${safeTimestamp}${ext}`;
       await bucket.upload(file.path, { destination: filename, metadata: { contentType: file.mimetype } });
+      insertImageLabel.run(filename, isoTimestamp);
       fs.unlinkSync(file.path);
       logEntries.push(`[${timestamp}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
     }
@@ -681,13 +693,10 @@ app.post('/set-label', requireLogin, requireAdmin, async (req, res) => {
 
   try {
     db.prepare(`
-      INSERT INTO image_labels (filename, label, created_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(filename)
-      DO UPDATE SET
-        label = excluded.label,
-        created_at = CURRENT_TIMESTAMP
-    `).run(filename, label);
+      UPDATE image_labels
+      SET label = ?
+      WHERE filename = ?
+    `).run(label, filename);
     await saveDatabase();
     res.json({ success: true });
 
@@ -777,7 +786,7 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
           .top-bar { display: flex; gap: 20px; margin-bottom: 20px; }
           .gallery { display: flex; flex-wrap: wrap; gap: 16px; }
           .photo { width: 200px; border: 1px solid #ccc; padding: 10px; }
-          .filename { margin-top: 6px; font-size: 13px; }
+          .filename { margin-top: 6px; font-size: 13px; word-break: break-all;}
         </style>
 
         <script>
@@ -806,9 +815,8 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
           <input type="date" name="endDate" value="${endDate}">
 
           <button type="submit">Filter</button>
-
           <a href="/download-all?label=${label}&startDate=${startDate}&endDate=${endDate}">
-            Download Filtered
+            Download
           </a>
         </form>
 
@@ -936,44 +944,11 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
 // ===================================================================
 //                           LOGS
 // ===================================================================
-
-// Download all combined logs as one file
-app.get('/download-log', requireLogin, requireAdmin, async (req, res) => {
-  try {
-    const [files] = await bucket.getFiles({ prefix: 'logs/' });
-    const logFiles = files.filter(f => f.name.endsWith('.txt'));
-
-    if (!logFiles.length) {
-      return res.status(404).send('No log files found.');
-    }
-
-    // Sort by filename (timestamp)
-    logFiles.sort((a, b) => a.name.localeCompare(b.name));
-
-    // Read and combine all log contents
-    let combinedLogs = '';
-    for (const file of logFiles) {
-      const [content] = await file.download();
-      combinedLogs += content.toString('utf8') + '\n';
-    }
-
-    // Send as downloadable text file
-    res.setHeader(
-      'Content-Disposition',
-      'attachment; filename="combined_upload_logs.txt"'
-    );
-    res.setHeader('Content-Type', 'text/plain');
-    res.send(combinedLogs);
-  } catch (err) {
-    console.error('Error downloading combined logs:', err);
-    res.status(500).send('Could not download log files.');
-  }
-});
-
-
-// View all combined logs in browser
 app.get('/view-log', requireLogin, requireAdmin, async (req, res) => {
   try {
+    const { label = 'all', startDate = '', endDate = '', download } = req.query;
+
+    // 1️⃣ Fetch all log files from GCS
     const [files] = await bucket.getFiles({ prefix: 'logs/' });
     const logFiles = files.filter(f => f.name.endsWith('.txt'));
 
@@ -981,35 +956,101 @@ app.get('/view-log', requireLogin, requireAdmin, async (req, res) => {
       return res.send('<html><body><h2>No logs found.</h2></body></html>');
     }
 
-    // Sort by filename (timestamp)
+    // 2️⃣ Sort logs by filename (timestamp)
     logFiles.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Combine all logs
-    let combinedLogs = '';
+    // 3️⃣ Get image_labels DB
+    const labelMap = await getLabelMap();
+
+    // 4️⃣ Compute start/end timestamps
+    const startTs = startDate ? new Date(startDate + 'T00:00:00').getTime() : null;
+    const endTs   = endDate ? new Date(endDate + 'T23:59:59').getTime() : null;
+
+    // 5️⃣ Filter log lines according to label & date
+    const path = require('path');
+    const filteredLines = [];
     for (const file of logFiles) {
       const [content] = await file.download();
-      combinedLogs += content.toString('utf8') + '\n';
+      const lines = content.toString('utf8').split('\n').filter(Boolean);
+
+      for (const line of lines) {
+        const match = line.match(/Filename:\s*(\S+)/);
+        if (!match) continue;
+
+        const filename = path.basename(match[1]);
+        const row = labelMap[filename];
+        const labelStr = row?.label || 'clean';
+
+        if (label !== 'all' && labelStr !== label) continue;
+
+        const ts = new Date(file.metadata.timeCreated).getTime();
+        if (startTs && ts < startTs) continue;
+        if (endTs && ts > endTs) continue;
+
+        filteredLines.push(line);
+      }
     }
 
-    // Display safely in browser
+    if (download) {
+      // 6️⃣ Send filtered logs as downloadable file
+      if (!filteredLines.length) {
+        return res.status(404).send('No logs matching the filter.');
+      }
+      res.setHeader('Content-Disposition', 'attachment; filename="filtered_logs.txt"');
+      res.setHeader('Content-Type', 'text/plain');
+      return res.send(filteredLines.join('\n'));
+    }
+
+    // 7️⃣ Render HTML page with filter form and logs
     res.send(`
       <html>
         <head>
-          <title>Upload Logs</title>
+          <title>Filtered Upload Logs</title>
           <style>
-            body { font-family: monospace; background: #fafafa; color: #333; }
+            body { font-family: monospace; background: #fafafa; color: #333; padding: 20px; }
             pre { white-space: pre-wrap; word-wrap: break-word; }
+            form { margin-bottom: 20px; }
+            label { margin-right: 10px; }
+            button, a.button { padding: 6px 12px; background: #4CAF50; color: white; text-decoration: none; border-radius: 4px; }
+            a.button { display: inline-block; margin-left: 10px; }
           </style>
         </head>
         <body>
-          <h1>Combined Upload Logs</h1>
-          <pre>${escapeHtml(combinedLogs)}</pre>
+          <h1>Filtered Upload Logs</h1>
+
+          <form method="get" action="/view-log">
+            <label>
+              Label:
+              <select name="label">
+                <option value="all" ${label==='all'?'selected':''}>All</option>
+                <option value="infected" ${label==='infected'?'selected':''}>Infected</option>
+                <option value="clean" ${label==='clean'?'selected':''}>Clean</option>
+              </select>
+            </label>
+
+            <label>
+              Start Date:
+              <input type="date" name="startDate" value="${startDate}">
+            </label>
+
+            <label>
+              End Date:
+              <input type="date" name="endDate" value="${endDate}">
+            </label>
+
+            <button type="submit">Filter Logs</button>
+
+            <a class="button" href="/view-log?download=1&label=${label}&startDate=${startDate}&endDate=${endDate}">Download Logs</a>
+          </form>
+
+          <pre>${escapeHtml(filteredLines.join('\n'))}</pre>
         </body>
       </html>
     `);
+
   } catch (err) {
-    console.error('Error reading combined logs from GCS:', err);
-    res.status(500).send('Could not read log files.');
+    console.error('Error viewing logs:', err);
+    res.status(500).send('Failed to load logs');
   }
 });
 
@@ -1116,7 +1157,6 @@ app.get('/dashboard', requireLogin, requireAdmin, requirePasswordChange, (req, r
 
       <a class="btn" href="/gallery" target="_blank">📷 View Uploaded Photos</a>
       <a class="btn" href="/view-users" target="_blank">👥 View Users & Roles</a>
-      <a class="btn" href="/download-log">⬇️ Download Log File</a>
       <a class="btn" href="/view-log" target="_blank">📄 View Log File</a>
       <a class="btn" href="/logout">Logout</a>
     </body>
