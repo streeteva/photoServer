@@ -48,7 +48,6 @@ const authenticateJWT = (req, res, next) => {
 // ---------- Database Init & Startup ----------
 const { loadDatabase,saveDatabase } = require('./dbManager');
 
-
 // -----------Helper functions--------------------
 function getUserSecurity(userId) {
   return db.prepare('SELECT * FROM user_security WHERE userId = ?').get(userId);
@@ -122,7 +121,6 @@ async function initDatabase() {
       role TEXT DEFAULT 'user'
     )
   `).run();
-
   const users = db.prepare('SELECT userId FROM users').all();
   console.log('Users in DB:', users);
   ensureUsersTableHasRole();
@@ -199,7 +197,6 @@ async function initDatabase() {
 
   console.log('✅ Database initialization complete.');
 }
-
 
 // ---------- Startup ----------
 (async () => {
@@ -747,7 +744,7 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
 
       imageFiles = imageFiles.filter(f => {
         const row = labelMap[f.name];
-        const ts = new Date(row?.created_at || f.metadata.timeCreated).getTime();
+        const ts = new Date(f.metadata.timeCreated).getTime();
         if (startTs && ts < startTs) return false;
         if (endTs && ts > endTs) return false;
         return true;
@@ -867,52 +864,33 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { label = "all", startDate = "", endDate = "" } = req.query;
 
-    // 1️⃣ Fetch all GCS images
     const [files] = await bucket.getFiles();
     let imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
 
-    // 2️⃣ Get all labels
-    const labelMap = getLabelMap();
+    const labelMap = await getLabelMap();
 
-    // 3️⃣ Auto-insert missing rows
-    for (const f of imageFiles) {
-      if (!labelMap[f.name]) {
-        db.prepare(`
-          INSERT INTO image_labels (filename, label)
-          VALUES (?, 'clean')
-          ON CONFLICT(filename) DO NOTHING
-        `).run(f.name);
-
-        const row = db.prepare("SELECT filename, label, created_at FROM image_labels WHERE filename = ?").get(f.name);
-        labelMap[f.name] = row;
-      }
-    }
-
-    // 4️⃣ Label Filter
+    // Label filter
     if (label !== "all") {
       imageFiles = imageFiles.filter(f =>
-        (labelMap[f.name]?.label || "clean") === label
+        labelMap[f.name] && labelMap[f.name].label === label
       );
     }
- 
-    // 5️⃣ Apply date filter
-    if (startDate || endDate) {
-      const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
-      const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
 
+    // Date filter
+    if (startDate || endDate) {
       imageFiles = imageFiles.filter(f => {
         const row = labelMap[f.name];
-        const ts = new Date(row?.created_at || f.metadata.timeCreated).getTime();
-        if (startTs && ts < startTs) return false;
-        if (endTs && ts > endTs) return false;
+        const ts = new Date(f.metadata?.timeCreated).getTime();
+        if (startDate && ts < new Date(startDate).getTime()) return false;
+        if (endDate && ts > new Date(endDate).getTime()) return false;
         return true;
       });
     }
-    //6️⃣ If no images matched → stop here
+
     if (imageFiles.length === 0) {
       return res.status(404).send('No images to download');
     }
-    // 7️⃣ Generate ZIP
+
     res.attachment('filtered_photos.zip');
     const archive = archiver('zip', { zlib: { level: 9 } });
 
