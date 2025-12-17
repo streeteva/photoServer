@@ -107,6 +107,41 @@ function getLabelMap() {
   rows.forEach(r => map[r.filename] = r);
   return map;
 }
+
+async function getFilteredImages({ label, startDate, endDate }) {
+  const [files] = await bucket.getFiles();
+  let imageFiles = files.filter(f =>
+    /\.(jpg|jpeg|png|gif)$/i.test(f.name)
+  );
+
+  let labelMap = {};
+  try {
+    labelMap = await getLabelMap();
+  } catch {}
+
+  // Label filter
+  if (label !== "all") {
+    imageFiles = imageFiles.filter(
+      f => (labelMap[f.name]?.label || "clean") === label
+    );
+  }
+
+  // Date filter
+  if (startDate || endDate) {
+    const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
+    const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
+
+    imageFiles = imageFiles.filter(f => {
+      const ts = new Date(f.metadata.timeCreated).getTime();
+      if (startTs && ts < startTs) return false;
+      if (endTs && ts > endTs) return false;
+      return true;
+    });
+  }
+
+  return { imageFiles, labelMap };
+}
+
 // ------------------Main DB init---------------------------
 async function initDatabase() {
   // 1️⃣ Load existing DB (local/cloud)
@@ -714,79 +749,61 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { label = "all", startDate = "", endDate = "" } = req.query;
 
-    // 1️⃣ Fetch files from GCS
-    const [files] = await bucket.getFiles();
-    let imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
+    const hasFilter =
+      label !== "all" || startDate || endDate;
 
-    // 2️⃣ Get labels from DB
+    let imagesHtml = '';
     let labelMap = {};
-    try {
-      labelMap = await getLabelMap(); // may return empty {}
-    } catch (err) {
-      console.warn('Failed to get label map, proceeding with empty map:', err.message);
+
+    if (hasFilter) {
+      const result = await getFilteredImages({ label, startDate, endDate });
+      labelMap = result.labelMap;
+
+      const signedUrls = await Promise.all(
+        result.imageFiles.map(async f => {
+          try {
+            const [url] = await f.getSignedUrl({
+              version: "v4",
+              action: "read",
+              expires: Date.now() + 15 * 60 * 1000
+            });
+            return { name: f.name, url };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      imagesHtml = signedUrls
+        .filter(Boolean)
+        .map(f => `
+          <div class="photo">
+            <img src="${f.url}" width="100%">
+            <div class="filename">${f.name}</div>
+
+            <label>
+              <input type="checkbox"
+                ${labelMap[f.name]?.label === 'infected' ? 'checked' : ''}
+                onchange="setLabel('${f.name}', this.checked)">
+              Infected
+            </label>
+
+            <br>
+            <a href="/download/${encodeURIComponent(f.name)}">Download</a>
+          </div>
+        `).join('');
     }
 
-    // 3️⃣ Auto-insert missing DB rows with default 'clean'
-    for (const f of imageFiles) {
-      if (!labelMap[f.name]) {
-        db.prepare(`
-          INSERT INTO image_labels (filename, label)
-          VALUES (?, 'clean')
-          ON CONFLICT(filename) DO NOTHING
-        `).run(f.name);
-
-        // Refresh labelMap entry
-        const row = db.prepare("SELECT filename, label, created_at FROM image_labels WHERE filename = ?").get(f.name);
-        labelMap[f.name] = row;
-      }
-    }
-
-    // 4️⃣ Apply label filter
-    if (label !== "all") {
-      imageFiles = imageFiles.filter(f => (labelMap[f.name]?.label || 'clean') === label);
-    }
-
-    // 5️⃣ Apply date filter
-    if (startDate || endDate) {
-      const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
-      const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
-
-      imageFiles = imageFiles.filter(f => {
-        const row = labelMap[f.name];
-        const ts = new Date(f.metadata.timeCreated).getTime();
-        if (startTs && ts < startTs) return false;
-        if (endTs && ts > endTs) return false;
-        return true;
-      });
-    }
-
-    // 6️⃣ Generate signed URLs safely
-    const signedUrls = await Promise.all(imageFiles.map(async file => {
-      try {
-        const [url] = await file.getSignedUrl({
-          version: 'v4',
-          action: 'read',
-          expires: Date.now() + 15 * 60 * 1000
-        });
-        return { name: file.name, url };
-      } catch (err) {
-        console.warn(`Failed to get signed URL for ${file.name}:`, err.message);
-        return null; // skip this file
-      }
-    }));
-    const validUrls = signedUrls.filter(f => f !== null);
-
-    // 7️⃣ Render HTML
-    const html = `
+    res.send(`
       <html>
       <head>
         <title>Photo Gallery</title>
         <style>
           body { font-family: Arial; padding: 20px; }
-          .top-bar { display: flex; gap: 20px; margin-bottom: 20px; }
+          .top-bar { display: flex; gap: 10px; margin-bottom: 20px; }
           .gallery { display: flex; flex-wrap: wrap; gap: 16px; }
           .photo { width: 200px; border: 1px solid #ccc; padding: 10px; }
-          .filename { margin-top: 6px; font-size: 13px; word-break: break-all;}
+          .filename { font-size: 12px; word-break: break-all; }
         </style>
 
         <script>
@@ -794,17 +811,19 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
             fetch('/set-label', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ filename, label: checked ? 'infected' : 'clean' })
+              body: JSON.stringify({
+                filename,
+                label: checked ? 'infected' : 'clean'
+              })
             });
           }
         </script>
       </head>
-      <body>
 
+      <body>
         <h1>Uploaded Photos</h1>
 
-        <!-- FILTERS -->
-        <form method="get" action="/gallery" class="top-bar">
+        <form method="get" class="top-bar">
           <select name="label">
             <option value="all" ${label==='all'?'selected':''}>All</option>
             <option value="infected" ${label==='infected'?'selected':''}>Infected</option>
@@ -815,35 +834,24 @@ app.get('/gallery', requireLogin, requireAdmin, async (req, res) => {
           <input type="date" name="endDate" value="${endDate}">
 
           <button type="submit">Filter</button>
-          <a href="/download-all?label=${label}&startDate=${startDate}&endDate=${endDate}">
-            Download
-          </a>
+
+          ${
+            hasFilter
+              ? `<a href="/download-all?label=${label}&startDate=${startDate}&endDate=${endDate}">
+                   Download Photos
+                 </a>`
+              : ''
+          }
         </form>
 
+        ${!hasFilter ? '<p>Apply a filter to view images.</p>' : ''}
+
         <div class="gallery">
-          ${validUrls.map(f => `
-            <div class="photo">
-              <img src="${f.url}" width="100%">
-              <div class="filename">${f.name}</div>
-
-              <label>
-                <input type="checkbox"
-                  ${labelMap[f.name]?.label === 'infected' ? 'checked' : ''}
-                  onchange="setLabel('${f.name}', this.checked)">
-                Infected
-              </label>
-
-              <br>
-              <a href="/download/${encodeURIComponent(f.name)}">Download</a>
-            </div>
-          `).join('')}
+          ${imagesHtml}
         </div>
-
       </body>
       </html>
-    `;
-
-    res.send(html);
+    `);
 
   } catch (err) {
     console.error('Gallery error:', err);
@@ -872,59 +880,16 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { label = "all", startDate = "", endDate = "" } = req.query;
 
-    // 1️⃣ Fetch files
-    const [files] = await bucket.getFiles();
-    let imageFiles = files.filter(f => /\.(jpg|jpeg|png|gif)$/i.test(f.name));
+    const { imageFiles } = await getFilteredImages({
+      label,
+      startDate,
+      endDate
+    });
 
-    // 2️⃣ Get labels
-    let labelMap = {};
-    try {
-      labelMap = await getLabelMap();
-    } catch {
-      labelMap = {};
-    }
-
-    // 3️⃣ Auto-insert missing rows (CRITICAL)
-    for (const f of imageFiles) {
-      if (!labelMap[f.name]) {
-        db.prepare(`
-          INSERT INTO image_labels (filename, label)
-          VALUES (?, 'clean')
-          ON CONFLICT(filename) DO NOTHING
-        `).run(f.name);
-
-        labelMap[f.name] = db.prepare(
-          "SELECT filename, label, created_at FROM image_labels WHERE filename = ?"
-        ).get(f.name);
-      }
-    }
-
-    // 4️⃣ Label filter (MATCH gallery)
-    if (label !== "all") {
-      imageFiles = imageFiles.filter(
-        f => (labelMap[f.name]?.label || "clean") === label
-      );
-    }
-
-    // 5️⃣ Date filter (MATCH gallery)
-    if (startDate || endDate) {
-      const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
-      const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
-
-      imageFiles = imageFiles.filter(f => {
-        const ts = new Date(f.metadata.timeCreated).getTime();
-        if (startTs && ts < startTs) return false;
-        if (endTs && ts > endTs) return false;
-        return true;
-      });
-    }
-
-    // 6️⃣ Guard
-    if (imageFiles.length === 0) {
+    if (!imageFiles.length) {
       return res.status(404).send("No images to download");
     }
 
-    // 7️⃣ ZIP
     res.attachment("filtered_photos.zip");
     const archive = archiver("zip", { zlib: { level: 9 } });
     archive.pipe(res);
@@ -934,10 +899,9 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
     }
 
     await archive.finalize();
-
   } catch (err) {
-    console.error("Download ZIP error:", err);
-    res.status(500).send("Failed to zip files");
+    console.error("Download error:", err);
+    res.status(500).send("Failed to download images");
   }
 });
 
@@ -946,111 +910,110 @@ app.get('/download-all', requireLogin, requireAdmin, async (req, res) => {
 // ===================================================================
 app.get('/view-log', requireLogin, requireAdmin, async (req, res) => {
   try {
-    const { label = 'all', startDate = '', endDate = '', download } = req.query;
+    const { label = "all", startDate = "", endDate = "", download } = req.query;
 
-    // 1️⃣ Fetch all log files from GCS
-    const [files] = await bucket.getFiles({ prefix: 'logs/' });
-    const logFiles = files.filter(f => f.name.endsWith('.txt'));
+    // 🚫 Do NOT show logs unless filter is applied
+    const hasFilter =
+      label !== "all" || startDate || endDate;
 
-    if (!logFiles.length) {
-      return res.send('<html><body><h2>No logs found.</h2></body></html>');
-    }
+    let filteredLines = [];
 
-    // 2️⃣ Sort logs by filename (timestamp)
-    logFiles.sort((a, b) => a.name.localeCompare(b.name));
+    if (hasFilter) {
+      // 1️⃣ Get filtered images (SAME as gallery)
+      const { imageFiles } = await getFilteredImages({
+        label,
+        startDate,
+        endDate
+      });
 
-    // 3️⃣ Get image_labels DB
-    const labelMap = await getLabelMap();
+      const allowedFilenames = new Set(
+        imageFiles.map(f => f.name)
+      );
 
-    // 4️⃣ Compute start/end timestamps
-    const startTs = startDate ? new Date(startDate + 'T00:00:00').getTime() : null;
-    const endTs   = endDate ? new Date(endDate + 'T23:59:59').getTime() : null;
+      // 2️⃣ Read raw GCS log files
+      const [files] = await bucket.getFiles({ prefix: 'logs/' });
+      const logFiles = files.filter(f => f.name.endsWith('.txt'));
 
-    // 5️⃣ Filter log lines according to label & date
-    const path = require('path');
-    const filteredLines = [];
-    for (const file of logFiles) {
-      const [content] = await file.download();
-      const lines = content.toString('utf8').split('\n').filter(Boolean);
+      for (const file of logFiles) {
+        const [content] = await file.download();
+        const lines = content.toString('utf8').split('\n').filter(Boolean);
 
-      for (const line of lines) {
-        const match = line.match(/Filename:\s*(\S+)/);
-        if (!match) continue;
+        for (const line of lines) {
+          const match = line.match(/Filename:\s*(\S+)/);
+          if (!match) continue;
 
-        const filename = path.basename(match[1]);
-        const row = labelMap[filename];
-        const labelStr = row?.label || 'clean';
-
-        if (label !== 'all' && labelStr !== label) continue;
-
-        const ts = new Date(file.metadata.timeCreated).getTime();
-        if (startTs && ts < startTs) continue;
-        if (endTs && ts > endTs) continue;
-
-        filteredLines.push(line);
+          const filename = match[1];
+          if (allowedFilenames.has(filename)) {
+            filteredLines.push(line);
+          }
+        }
       }
     }
 
-    if (download) {
-      // 6️⃣ Send filtered logs as downloadable file
+    // ⬇️ Download mode
+    if (download && hasFilter) {
       if (!filteredLines.length) {
-        return res.status(404).send('No logs matching the filter.');
+        return res.status(404).send("No logs match the filter");
       }
-      res.setHeader('Content-Disposition', 'attachment; filename="filtered_logs.txt"');
+
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename="filtered_logs.txt"'
+      );
       res.setHeader('Content-Type', 'text/plain');
       return res.send(filteredLines.join('\n'));
     }
 
-    // 7️⃣ Render HTML page with filter form and logs
+    // 🖥️ View page
     res.send(`
       <html>
-        <head>
-          <title>Filtered Upload Logs</title>
-          <style>
-            body { font-family: monospace; background: #fafafa; color: #333; padding: 20px; }
-            pre { white-space: pre-wrap; word-wrap: break-word; }
-            form { margin-bottom: 20px; }
-            label { margin-right: 10px; }
-            button, a.button { padding: 6px 12px; background: #4CAF50; color: white; text-decoration: none; border-radius: 4px; }
-            a.button { display: inline-block; margin-left: 10px; }
-          </style>
-        </head>
-        <body>
-          <h1>Filtered Upload Logs</h1>
+      <head>
+        <title>Upload Logs</title>
+        <style>
+          body { font-family: monospace; padding: 20px; background: #fafafa; }
+          pre { white-space: pre-wrap; word-break: break-word; }
+          form { margin-bottom: 20px; }
+          button, a { padding: 6px 12px; background: #4CAF50; color: white; text-decoration: none; border-radius: 4px; }
+          a { margin-left: 10px; }
+        </style>
+      </head>
 
-          <form method="get" action="/view-log">
-            <label>
-              Label:
-              <select name="label">
-                <option value="all" ${label==='all'?'selected':''}>All</option>
-                <option value="infected" ${label==='infected'?'selected':''}>Infected</option>
-                <option value="clean" ${label==='clean'?'selected':''}>Clean</option>
-              </select>
-            </label>
+      <body>
+        <h1>Upload Logs</h1>
 
-            <label>
-              Start Date:
-              <input type="date" name="startDate" value="${startDate}">
-            </label>
+        <form method="get">
+          <select name="label">
+            <option value="all" ${label==='all'?'selected':''}>All</option>
+            <option value="infected" ${label==='infected'?'selected':''}>Infected</option>
+            <option value="clean" ${label==='clean'?'selected':''}>Clean</option>
+          </select>
 
-            <label>
-              End Date:
-              <input type="date" name="endDate" value="${endDate}">
-            </label>
+          <input type="date" name="startDate" value="${startDate}">
+          <input type="date" name="endDate" value="${endDate}">
 
-            <button type="submit">Filter Logs</button>
+          <button type="submit">Filter Logs</button>
 
-            <a class="button" href="/view-log?download=1&label=${label}&startDate=${startDate}&endDate=${endDate}">Download Logs</a>
-          </form>
+          ${
+            hasFilter
+              ? `<a href="/view-log?download=1&label=${label}&startDate=${startDate}&endDate=${endDate}">
+                   Download Logs
+                 </a>`
+              : ''
+          }
+        </form>
 
-          <pre>${escapeHtml(filteredLines.join('\n'))}</pre>
-        </body>
+        ${
+          !hasFilter
+            ? '<p>Apply a filter to view logs.</p>'
+            : `<pre>${escapeHtml(filteredLines.join('\n'))}</pre>`
+        }
+      </body>
       </html>
     `);
 
   } catch (err) {
-    console.error('Error viewing logs:', err);
-    res.status(500).send('Failed to load logs');
+    console.error('View-log error:', err);
+    res.status(500).send("Failed to load logs");
   }
 });
 
