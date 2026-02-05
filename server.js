@@ -216,8 +216,8 @@ async function getFilteredImages({ label, startDate, endDate }) {
 
   // Date filter
   if (startDate || endDate) {
-    const startTs = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
-    const endTs   = endDate   ? new Date(endDate + "T23:59:59").getTime() : null;
+    const startTs = startDate ? new Date(startDate + "T00:00:00Z").getTime() : null;
+    const endTs   = endDate   ? new Date(endDate + "T23:59:59Z").getTime() : null;
 
     imageFiles = imageFiles.filter(f => {
       const ts = new Date(f.metadata.timeCreated).getTime();
