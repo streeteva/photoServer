@@ -125,27 +125,25 @@ function buildComplianceMatrix(rows) {
   const weeks = {};
 
   for (const r of rows) {
-    const week = Number(r.week); 
+    const weekNum = Number(r.week);
+    const yearNum = Number(r.year);
 
-    if (!weeks[week]) {
-      weeks[week] = {
-        year: r.year,
-        Mon: [], Tue: [], Wed: [], Thurs: [], Fri: [], Sat: [], Sun: []
-      };
+    if (!Number.isInteger(weekNum) || !Number.isInteger(yearNum)) continue;
+
+    if (!weeks[yearNum]) weeks[yearNum] = {};
+    if (!weeks[yearNum][weekNum]) {
+      weeks[yearNum][weekNum] = { Mon: [], Tue: [], Wed: [], Thurs: [], Fri: [], Sat: [], Sun: [] };
     }
 
     const day = weekdayName(Number(r.weekday));
-    weeks[week][day].push(r.userId);
+    weeks[yearNum][weekNum][day].push(r.userId);
   }
 
   return weeks;
 }
 
-
 function renderRows(weekData) {
-  const maxRows = Math.max(
-    ...Object.values(weekData).map(d => d.length)
-  );
+  const maxRows = Math.max(...Object.values(weekData).map(d => d.length));
 
   let rows = '';
   for (let i = 0; i < maxRows; i++) {
@@ -158,7 +156,15 @@ function renderRows(weekData) {
   return rows;
 }
 
-function getISOWeekRange(year, week) {
+
+function getISOWeek(year, week) {
+
+  year = Number(year);
+  week = Number(week);
+
+  if (!Number.isInteger(year) || !Number.isInteger(week) || week < 1 || week > 53) {
+    return 'Invalid date';
+  }
   const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
   const dow = simple.getUTCDay();
   const monday = new Date(simple);
@@ -764,8 +770,8 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
       `);
   const insertImageUpload = db.prepare(`
         INSERT INTO image_uploads (userId, filename, uploaded_at, upload_date, week)
-        VALUES (?, ?, ?, ?)
-      `).run(userId, filename, uploadedAt, uploadDate, week);
+        VALUES (?, ?, ?, ?,?)
+      `);
 
   try {
     for (const file of req.files) {
@@ -867,7 +873,6 @@ const availableWeeks =
 
   // ---- filter form ----
   let html = `
-    <h1>Compliance Tracking</h1>
     <form method="GET">
       <label>Year:</label>
       <select name="year" onchange="this.form.week.value=''; this.form.submit();">
@@ -887,67 +892,36 @@ const availableWeeks =
   `;
 
   // ---- render tables ----
-for (const wk of Object.keys(matrix)) {
-  const year = matrix[wk].year;
-  const range = getISOWeekRange(Number(year), Number(wk));
+  for (const yr of Object.keys(matrix).sort((a,b)=>b-a)) {
+    for (const wk of Object.keys(matrix[yr]).sort((a,b)=>a-b)) {
+      const range = getISOWeek(yr, wk);
+      html += `
+        <h3>Year ${yr} - Week ${wk} (${range})</h3>
+        <div class="table-wrapper">
+          <table class="compliance-table">
+            <tr>
+              <th></th>
+              <th>Mon</th><th>Tue</th><th>Wed</th>
+              <th>Thurs</th><th>Fri</th><th>Sat</th><th>Sun</th>
+            </tr>
+            ${renderRows(matrix[yr][wk])}
+          </table>
+        </div>
+      `;
+    }
+  }
 
-  html += `
-  <head>
+  res.send(`<html><head>
     <style>
-    .compliance-table {
-    border-collapse: collapse;
-    table-layout: fixed;
-    width: 900px;           /* 🔒 fixed width */
-  }
-
-  .compliance-table th,
-  .compliance-table td {
-    border: 1px solid #333;
-    text-align: center;
-    vertical-align: middle;
-    padding: 4px;
-    height: 32px;           /* 🔒 fixed row height */
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-size: 14px;
-  }
-
-  .compliance-table th:first-child,
-  .compliance-table td:first-child {
-    width: 40px;            /* row index column */
-  }
-
-  .compliance-table th:not(:first-child),
-  .compliance-table td:not(:first-child) {
-    width: calc((900px - 40px) / 7); /* Mon–Sun */
-  }
-
-  .table-wrapper {
-    max-height: 260px;      /* 🔒 fixed table height */
-    overflow-y: auto;       /* vertical scroll */
-    margin-bottom: 24px;
-  }
-
-  h3 {
-    margin-bottom: 6px;
-  }
-  </style>
-  </head>
-    <h3>Week ${Number(wk)} (${range})</h3>
-    <div class="table-wrapper">
-      <table class="compliance-table">
-      <tr>
-        <th></th>
-        <th>Mon</th><th>Tue</th><th>Wed</th>
-        <th>Thurs</th><th>Fri</th><th>Sat</th><th>Sun</th>
-      </tr>
-      ${renderRows(matrix[wk])}
-      </table>
-    </div>
-  `;
-}
-  res.send(`<html><body>${html}</body></html>`);
+      .compliance-table{border-collapse:collapse;table-layout:fixed;width:900px;}
+      .compliance-table th,.compliance-table td{border:1px solid #333;text-align:center;vertical-align:middle;padding:4px;height:32px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:14px;}
+      .compliance-table th:first-child,.compliance-table td:first-child{width:40px;}
+      .compliance-table th:not(:first-child),.compliance-table td:not(:first-child){width:calc((900px-40px)/7);}
+      .table-wrapper{max-height:260px;overflow-y:auto;margin-bottom:24px;}
+    </style>
+  </head><body>
+    <h1>Compliance Tracking</h1>${html}
+  </body></html>`);
 });
 
 
