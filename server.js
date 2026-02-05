@@ -196,33 +196,46 @@ function getWeekRange(year, week) {
 }
 
 
-async function getFilteredImages({ label, startDate, endDate }) {
-  const [files] = await bucket.getFiles();
-  let imageFiles = files.filter(f =>
+function toLocalDateString(date, offsetHours = 8) {
+  // Convert UTC date to local date string like "YYYY-MM-DD"
+  const localTs = date.getTime() + offsetHours * 60 * 60 * 1000;
+  const localDate = new Date(localTs);
+  const yyyy = localDate.getUTCFullYear();
+  const mm = String(localDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(localDate.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+async function getFilteredImages({ label = "all", startDate, endDate, tzOffset = 8 }) {
+  const [files] = await bucket.getFiles({ autoPaginate: false });
+
+  const filesWithMetadata = await Promise.all(
+    files.map(async f => {
+      const [metadata] = await f.getMetadata();
+      f.metadata = metadata;
+      return f;
+    })
+  );
+
+  let imageFiles = filesWithMetadata.filter(f =>
     /\.(jpg|jpeg|png|gif)$/i.test(f.name)
   );
 
   let labelMap = {};
-  try {
-    labelMap = await getLabelMap();
-  } catch {}
+  try { labelMap = await getLabelMap(); } catch {}
 
-  // Label filter
   if (label !== "all") {
-    imageFiles = imageFiles.filter(
-      f => (labelMap[f.name]?.label || "clean") === label
-    );
+    imageFiles = imageFiles.filter(f => (labelMap[f.name]?.label || "clean") === label);
   }
 
-  // Date filter
   if (startDate || endDate) {
-    const startTs = startDate ? new Date(startDate + "T00:00:00Z").getTime() : null;
-    const endTs   = endDate   ? new Date(endDate + "T23:59:59Z").getTime() : null;
-
     imageFiles = imageFiles.filter(f => {
-      const ts = new Date(f.metadata.timeCreated).getTime();
-      if (startTs && ts < startTs) return false;
-      if (endTs && ts > endTs) return false;
+      if (!f.metadata.timeCreated) return false;
+      const utcDate = new Date(f.metadata.timeCreated);
+      const localDateStr = toLocalDateString(utcDate, tzOffset); // convert to local date string
+
+      if (startDate && localDateStr < startDate) return false;
+      if (endDate && localDateStr > endDate) return false;
       return true;
     });
   }
