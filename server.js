@@ -108,6 +108,73 @@ function getLabelMap() {
   return map;
 }
 
+function weekdayName(w) {
+    const map = {
+    1: 'Mon',
+    2: 'Tue',
+    3: 'Wed',
+    4: 'Thurs',
+    5: 'Fri',
+    6: 'Sat',
+    0: 'Sun'   // SQLite Sunday
+  };
+  return map[w];
+}
+
+function buildComplianceMatrix(rows) {
+  const weeks = {};
+
+  for (const r of rows) {
+    const week = Number(r.week); 
+
+    if (!weeks[week]) {
+      weeks[week] = {
+        year: r.year,
+        Mon: [], Tue: [], Wed: [], Thurs: [], Fri: [], Sat: [], Sun: []
+      };
+    }
+
+    const day = weekdayName(Number(r.weekday));
+    weeks[week][day].push(r.userId);
+  }
+
+  return weeks;
+}
+
+
+function renderRows(weekData) {
+  const maxRows = Math.max(
+    ...Object.values(weekData).map(d => d.length)
+  );
+
+  let rows = '';
+  for (let i = 0; i < maxRows; i++) {
+    rows += '<tr><td></td>';
+    for (const day of ['Mon','Tue','Wed','Thurs','Fri','Sat','Sun']) {
+      rows += `<td>${weekData[day][i] || ''}</td>`;
+    }
+    rows += '</tr>';
+  }
+  return rows;
+}
+
+function getISOWeekRange(year, week) {
+  const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
+  const dow = simple.getUTCDay();
+  const monday = new Date(simple);
+  if (dow <= 4) {
+    monday.setUTCDate(simple.getUTCDate() - simple.getUTCDay() + 1);
+  } else {
+    monday.setUTCDate(simple.getUTCDate() + 8 - simple.getUTCDay());
+  }
+
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+
+  const fmt = d => d.toISOString().slice(0, 10);
+  return `${fmt(monday)} → ${fmt(sunday)}`;
+}
+
 async function getFilteredImages({ label, startDate, endDate }) {
   const [files] = await bucket.getFiles();
   let imageFiles = files.filter(f =>
@@ -192,6 +259,16 @@ async function initDatabase() {
   )
 `).run();
 
+  db.prepare(`
+  CREATE TABLE IF NOT EXISTS image_uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  upload_date TEXT NOT NULL,   -- YYYY-MM-DD
+  week TEXT NOT NULL           -- e.g. 2026-W05
+  )
+`).run();
 
   let hashedPassword = null;
   // 3️⃣ Seed default admin if missing
@@ -452,6 +529,18 @@ app.post('/admin-2fa', async (req, res) => {
     delete req.session.pending2FARole;
     res.redirect('/dashboard');
   });
+
+  if (sec.twofaLocked && sec.twofaLockedUntil) {
+  if (Date.now() - new Date(sec.twofaLockedUntil).getTime() > 15 * 60 * 1000) {
+    await setUserSecurityState(userId, {
+      twofaLocked: 0,
+      twofaFailedAttempts: 0,
+      twofaLockedUntil: null
+    });
+  } else {
+    return res.status(423).send('2FA locked. Try again later.');
+  }
+}
 });
 
 
@@ -673,17 +762,34 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
       VALUES (?, 'clean', ?)
       ON CONFLICT(filename) DO NOTHING
       `);
+  const insertImageUpload = db.prepare(`
+        INSERT INTO image_uploads (userId, filename, uploaded_at, upload_date, week)
+        VALUES (?, ?, ?, ?)
+      `).run(userId, filename, uploadedAt, uploadDate, week);
 
   try {
     for (const file of req.files) {
       const ext = path.extname(file.originalname);
-      //const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${Date.now()}${ext}`;
+
       const timestamp = getSingaporeTimestamp();
-      const isoTimestamp = new Date(timestamp).toISOString();
+      const uploadedAtDate = new Date(timestamp);
+      const isoTimestamp = uploadedAtDate.toISOString();
       const safeTimestamp = isoTimestamp.replace(/[:.]/g, '-'); // 2025-12-15T14-30-45-123Z
+
       const filename = `${userId}_${row1Label}_${totalScore}_${row2Label}_${safeTimestamp}${ext}`;
+
+      // Upload to GCS
       await bucket.upload(file.path, { destination: filename, metadata: { contentType: file.mimetype } });
+      // Label table 
       insertImageLabel.run(filename, isoTimestamp);
+
+       // Compliance fields
+      const uploadDate = isoTimestamp.slice(0, 10); // YYYY-MM-DD
+      const week = getISOWeek(uploadedAtDate);      // ISO week number
+
+      // INSERT PER IMAGE (this is key)
+      // Insert into image_uploads
+      insertImageUpload.run(userId, filename, isoTimestamp, uploadDate, week);
       fs.unlinkSync(file.path);
       logEntries.push(`[${timestamp}] UserID: ${userId}, Infection: ${row1Label}, Score: ${totalScore}, ImageType: ${row2Label}, ${extraData}, Filename: ${filename}\n`);
     }
@@ -691,6 +797,8 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
       const logText = logEntries.join('');
       const logGCSName = `logs/upload_log_${Date.now()}.txt`;
       await bucket.file(logGCSName).save(logText);
+      
+      await saveDatabase();
 
     res.json({ message: 'Upload successful to GCS', files: logEntries.length });
   } catch (err) {
@@ -698,6 +806,150 @@ app.post('/uploads',  authenticateJWT, upload.array('photos[]', 5), async (req, 
     res.status(500).json({ message: 'Upload failed', error: err.message });
   }
 });
+
+// ===================================================================
+//                           VIEW COMPLICANCE
+// ===================================================================
+app.get('/compliance', requireLogin, requireAdmin, (req, res) => {
+let { year, week } = req.query;
+
+year = year ? String(year) : null;
+week = week ? parseInt(week, 10) : null;
+
+let where = [];
+let params = {};
+
+  if (year) {
+    where.push(`strftime('%Y', upload_date) = @year`);
+    params.year = year;
+  }
+
+if (Number.isInteger(week)) {
+  where.push(`CAST(week AS INTEGER) = @week`);
+  params.week = week;
+}
+
+const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+const rows = db.prepare(`
+  SELECT DISTINCT
+    CAST(week AS INTEGER) AS week,
+    strftime('%Y', upload_date) AS year,
+    upload_date,
+    strftime('%w', upload_date) AS weekday,
+    userId
+  FROM image_uploads
+  ${whereClause}
+  ORDER BY year DESC, week, upload_date, userId
+`).all(params);
+
+  const matrix = buildComplianceMatrix(rows);
+
+  // ---- filter options ----
+const options = db.prepare(`
+  SELECT DISTINCT
+    CAST(week AS INTEGER) AS week,
+    strftime('%Y', upload_date) AS year
+  FROM image_uploads
+  ORDER BY year DESC, week
+`).all();
+
+const weeksByYear = {};
+for (const w of options) {
+  if (!weeksByYear[w.year]) weeksByYear[w.year] = [];
+  weeksByYear[w.year].push(w.week);
+}
+
+const availableWeeks =
+  year && weeksByYear[year]
+    ? weeksByYear[year]
+    : [...new Set(options.map(w => w.week))];
+
+  // ---- filter form ----
+  let html = `
+    <h1>Compliance Tracking</h1>
+    <form method="GET">
+      <label>Year:</label>
+      <select name="year" onchange="this.form.week.value=''; this.form.submit();">
+        <option value="">All</option>
+        ${[...new Set(options.map(o => o.year))].map(y =>
+          `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`
+        ).join('')}
+      </select>
+      <select name="week" onchange="this.form.submit()">
+        <option value="">All weeks</option>
+        ${availableWeeks.map(w =>
+          `<option value="${w}" ${w === week ? 'selected' : ''}>Week ${w}</option>`
+        ).join('')}
+      </select>
+    </form>
+    <br/>
+  `;
+
+  // ---- render tables ----
+for (const wk of Object.keys(matrix)) {
+  const year = matrix[wk].year;
+  const range = getISOWeekRange(Number(year), Number(wk));
+
+  html += `
+  <head>
+    <style>
+    .compliance-table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    width: 900px;           /* 🔒 fixed width */
+  }
+
+  .compliance-table th,
+  .compliance-table td {
+    border: 1px solid #333;
+    text-align: center;
+    vertical-align: middle;
+    padding: 4px;
+    height: 32px;           /* 🔒 fixed row height */
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 14px;
+  }
+
+  .compliance-table th:first-child,
+  .compliance-table td:first-child {
+    width: 40px;            /* row index column */
+  }
+
+  .compliance-table th:not(:first-child),
+  .compliance-table td:not(:first-child) {
+    width: calc((900px - 40px) / 7); /* Mon–Sun */
+  }
+
+  .table-wrapper {
+    max-height: 260px;      /* 🔒 fixed table height */
+    overflow-y: auto;       /* vertical scroll */
+    margin-bottom: 24px;
+  }
+
+  h3 {
+    margin-bottom: 6px;
+  }
+  </style>
+  </head>
+    <h3>Week ${Number(wk)} (${range})</h3>
+    <div class="table-wrapper">
+      <table class="compliance-table">
+      <tr>
+        <th></th>
+        <th>Mon</th><th>Tue</th><th>Wed</th>
+        <th>Thurs</th><th>Fri</th><th>Sat</th><th>Sun</th>
+      </tr>
+      ${renderRows(matrix[wk])}
+      </table>
+    </div>
+  `;
+}
+  res.send(`<html><body>${html}</body></html>`);
+});
+
 
 // ===================================================================
 //                           ROLE MANAGEMENT
@@ -1078,6 +1330,7 @@ app.get('/view-users', requireLogin, requireAdmin, (req, res) => {
     </html>
   `);
 });
+
 // ===================================================================
 //                          UNLOCK USERS
 // ===================================================================
@@ -1120,6 +1373,7 @@ app.get('/dashboard', requireLogin, requireAdmin, requirePasswordChange, (req, r
 
       <a class="btn" href="/gallery" target="_blank">📷 View Uploaded Photos</a>
       <a class="btn" href="/view-users" target="_blank">👥 View Users & Roles</a>
+      <a class="btn" href="/compliance" target="_blank">📊 Compliance Tracking</a>
       <a class="btn" href="/view-log" target="_blank">📄 View Log File</a>
       <a class="btn" href="/logout">Logout</a>
     </body>
