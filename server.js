@@ -157,22 +157,36 @@ function renderRows(weekData) {
 }
 
 
-function getISOWeek(year, week) {
+function getISOWeek(dateInput) {
+  const d = (dateInput instanceof Date)
+    ? new Date(dateInput)
+    : new Date(dateInput);
 
+  if (isNaN(d)) return null;
+
+  // ISO week date weeks start on Monday
+  const day = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - day + 3);
+
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(
+    (d - firstThursday) / (7 * 24 * 60 * 60 * 1000)
+  );
+
+  return week; // 1–53
+}
+
+function getWeekRange(year, week) {
   year = Number(year);
   week = Number(week);
 
-  if (!Number.isInteger(year) || !Number.isInteger(week) || week < 1 || week > 53) {
-    return 'Invalid date';
-  }
-  const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
-  const dow = simple.getUTCDay();
-  const monday = new Date(simple);
-  if (dow <= 4) {
-    monday.setUTCDate(simple.getUTCDate() - simple.getUTCDay() + 1);
-  } else {
-    monday.setUTCDate(simple.getUTCDate() + 8 - simple.getUTCDay());
-  }
+  if (!year || !week || week < 1) return '';
+
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const monday = new Date(jan4);
+
+  const jan4Day = (jan4.getUTCDay() + 6) % 7;
+  monday.setUTCDate(jan4.getUTCDate() - jan4Day + (week - 1) * 7);
 
   const sunday = new Date(monday);
   sunday.setUTCDate(monday.getUTCDate() + 6);
@@ -180,6 +194,7 @@ function getISOWeek(year, week) {
   const fmt = d => d.toISOString().slice(0, 10);
   return `${fmt(monday)} → ${fmt(sunday)}`;
 }
+
 
 async function getFilteredImages({ label, startDate, endDate }) {
   const [files] = await bucket.getFiles();
@@ -894,7 +909,7 @@ const availableWeeks =
   // ---- render tables ----
   for (const yr of Object.keys(matrix).sort((a,b)=>b-a)) {
     for (const wk of Object.keys(matrix[yr]).sort((a,b)=>a-b)) {
-      const range = getISOWeek(yr, wk);
+      const range = getWeekRange(yr, wk);
       html += `
         <h3>Year ${yr} - Week ${wk} (${range})</h3>
         <div class="table-wrapper">
